@@ -43,6 +43,7 @@ pub fn diff_type_by_name<'p, T>(
     print_offset_info: bool,
     print_brackets_new_line: bool,
     ignore_std_types: bool,
+    ignore_compiler_generated_methods: bool,
 ) -> Result<Diff>
 where
     T: io::Seek + io::Read + std::fmt::Debug + 'p,
@@ -70,6 +71,7 @@ where
                 print_offset_info,
                 print_brackets_new_line,
                 ignore_std_types,
+                ignore_compiler_generated_methods,
             )
             .unwrap_or_default();
         let (reconstructed_type_to_tmp, _) = pdb_file_to
@@ -83,6 +85,7 @@ where
                 print_offset_info,
                 print_brackets_new_line,
                 ignore_std_types,
+                ignore_compiler_generated_methods,
             )
             .unwrap_or_default();
         if reconstructed_type_from_tmp.is_empty() && reconstructed_type_to_tmp.is_empty() {

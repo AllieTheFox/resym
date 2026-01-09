@@ -530,50 +530,52 @@ impl ReconstructibleTypeData for Class<'_> {
             let class_name = self.name.as_str().into();
             writeln!(f, "  ")?;
             for method in &self.instance_methods {
-                let method_has_class_name = method.name == class_name;
-                writeln!(
-                    f,
-                    "  {}{}{}{}{}({}){}{}{}{};",
-                    match fmt_configuration.print_access_specifiers {
-                        AccessSpecifierReconstructionFlavor::Disabled => &FieldAccess::None,
-                        AccessSpecifierReconstructionFlavor::Always => &method.access,
-                        AccessSpecifierReconstructionFlavor::Automatic => {
-                            if self.kind == pdb::ClassKind::Class
-                                || method.access != FieldAccess::Public
-                            {
-                                &method.access
-                            } else {
-                                &FieldAccess::None
+                if !fmt_configuration.ignore_compiler_generated_methods || !method.is_compiler_generated {
+                    let method_has_class_name = method.name == class_name;
+                    writeln!(
+                        f,
+                        "  {}{}{}{}{}({}){}{}{}{};",
+                        match fmt_configuration.print_access_specifiers {
+                            AccessSpecifierReconstructionFlavor::Disabled => &FieldAccess::None,
+                            AccessSpecifierReconstructionFlavor::Always => &method.access,
+                            AccessSpecifierReconstructionFlavor::Automatic => {
+                                if self.kind == pdb::ClassKind::Class
+                                    || method.access != FieldAccess::Public
+                                {
+                                    &method.access
+                                } else {
+                                    &FieldAccess::None
+                                }
                             }
-                        }
-                    },
-                    if method.is_virtual { "virtual " } else { "" },
-                    if method.is_ctor || method.is_dtor || method_has_class_name {
-                        ""
-                    } else {
-                        &method.return_type_name.0
-                    },
-                    if !method.is_ctor
-                        && !method.is_dtor
-                        && !method_has_class_name
-                        && method.return_type_name.1.is_empty()
-                    {
-                        " "
-                    } else {
-                        ""
-                    },
-                    &method.name,
-                    method
-                        .arguments
-                        .iter()
-                        .map(|(type_left, type_right)| format!("{type_left}{type_right}"))
-                        .collect::<Vec<String>>()
-                        .join(", "),
-                    method.return_type_name.1,
-                    if method.is_const { " const" } else { "" },
-                    if method.is_volatile { " volatile" } else { "" },
-                    if method.is_pure_virtual { " = 0" } else { "" },
-                )?;
+                        },
+                        if method.is_virtual { "virtual " } else { "" },
+                        if method.is_ctor || method.is_dtor || method_has_class_name {
+                            ""
+                        } else {
+                            &method.return_type_name.0
+                        },
+                        if !method.is_ctor
+                            && !method.is_dtor
+                            && !method_has_class_name
+                            && method.return_type_name.1.is_empty()
+                        {
+                            " "
+                        } else {
+                            ""
+                        },
+                        &method.name,
+                        method
+                            .arguments
+                            .iter()
+                            .map(|(type_left, type_right)| format!("{type_left}{type_right}"))
+                            .collect::<Vec<String>>()
+                            .join(", "),
+                        method.return_type_name.1,
+                        if method.is_const { " const" } else { "" },
+                        if method.is_volatile { " volatile" } else { "" },
+                        if method.is_pure_virtual { " = 0" } else { "" },
+                    )?;
+                }
             }
         }
 

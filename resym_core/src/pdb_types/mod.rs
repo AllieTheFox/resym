@@ -1184,6 +1184,7 @@ pub struct DataFormatConfiguration {
     pub print_access_specifiers: AccessSpecifierReconstructionFlavor,
     pub size_print_flavor: SizePrintFlavor,
     pub integers_as_hexadecimal: bool,
+    pub ignore_compiler_generated_methods: bool,
     pub print_offset_info: bool,
     pub print_brackets_new_line: bool,
 }
@@ -1194,6 +1195,7 @@ impl Default for DataFormatConfiguration {
             print_access_specifiers: AccessSpecifierReconstructionFlavor::Always,
             size_print_flavor: SizePrintFlavor::Comment,
             integers_as_hexadecimal: true,
+            ignore_compiler_generated_methods: true,
             print_offset_info: true,
             print_brackets_new_line: false,
         }

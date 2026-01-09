@@ -104,6 +104,7 @@ impl ResymcApp {
         print_offset_info: bool,
         print_brackets_new_line: bool,
         ignore_std_types: bool,
+        ignore_compiler_generated_methods: bool,
         highlight_syntax: bool,
         output_file_path: Option<PathBuf>,
     ) -> Result<()> {
@@ -134,6 +135,7 @@ impl ResymcApp {
                     print_offset_info,
                     print_brackets_new_line,
                     ignore_std_types,
+                    ignore_compiler_generated_methods,
                 ))?;
         } else {
             self.backend
@@ -147,6 +149,7 @@ impl ResymcApp {
                     print_offset_info,
                     print_brackets_new_line,
                     ignore_std_types,
+                    ignore_compiler_generated_methods,
                 ))?;
         }
         // Wait for the backend to finish filtering types
@@ -190,6 +193,7 @@ impl ResymcApp {
         print_offset_info: bool,
         print_brackets_new_line: bool,
         ignore_std_types: bool,
+        ignore_compiler_generated_methods: bool,
         highlight_syntax: bool,
         output_file_path: Option<PathBuf>,
     ) -> Result<()> {
@@ -243,6 +247,7 @@ impl ResymcApp {
             print_offset_info,
             print_brackets_new_line,
             ignore_std_types,
+            ignore_compiler_generated_methods,
         ))?;
         // Wait for the backend to finish
         if let FrontendCommand::DiffResult(reconstructed_type_diff_result) =
@@ -807,6 +812,7 @@ mod tests {
                 true,  // print_offset_info
                 false, // print_brackets_new_line
                 false, // ignore_std_types
+                false, // ignore_compiler_generated_methods
                 false, // highlight_syntax
                 None
             )
@@ -832,6 +838,7 @@ mod tests {
                 true,  // print_offset_info
                 false, // print_brackets_new_line
                 true,  // ignore_std_types
+                true,  // ignore_compiler_generated_methods
                 true,  // highlight_syntax
                 None
             )
@@ -860,6 +867,7 @@ mod tests {
                 true,  // print_offset_info
                 false, // print_brackets_new_line
                 false, // ignore_std_types
+                false, // ignore_compiler_generated_methods
                 false, // highlight_syntax
                 Some(output_path.clone()),
             )
@@ -895,6 +903,7 @@ mod tests {
                 true,  // print_offset_info
                 false, // print_brackets_new_line
                 false, // ignore_std_types
+                false, // ignore_compiler_generated_methods
                 false, // highlight_syntax
                 None   // output_file_path
             )
@@ -920,6 +929,7 @@ mod tests {
                 false, // integers_as_hexadecimal
                 true,  // print_offset_info
                 false, // print_brackets_new_line
+                false, // ignore_compiler_generated_methods
                 true,  // ignore_std_types
                 true,  // highlight_syntax
                 None   // output_file_path

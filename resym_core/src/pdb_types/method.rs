@@ -16,6 +16,7 @@ pub struct Method<'p> {
     pub is_dtor: bool,
     pub is_const: bool,
     pub is_volatile: bool,
+    pub is_compiler_generated: bool, 
     pub access: FieldAccess,
 }
 
@@ -24,6 +25,10 @@ impl<'p> Method<'p> {
     fn get_method_properties(attributes: pdb::FieldAttributes) -> u8 {
         let value: i16 = unsafe { mem::transmute(attributes) };
         return ((value & 0x001c) >> 2) as u8;
+    }
+    fn get_is_compiler_generated(attributes: pdb::FieldAttributes) -> bool {
+        let value: i16 = unsafe { mem::transmute(attributes) };
+        return ((value & 0x100) >> 8) == 1;
     }
     pub fn find(
         name: pdb::RawString<'p>,
@@ -73,6 +78,7 @@ impl<'p> Method<'p> {
                         false
                     }
                 },
+                is_compiler_generated: Method::get_is_compiler_generated(attributes),
                 access: FieldAccess::from_field_attribute(attributes.access()),
             }),
 
