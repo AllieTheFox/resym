@@ -3,6 +3,7 @@ use super::{
     NeededTypeSet, TypeForwarder,
 };
 use crate::error::{Result, ResymCoreError};
+use std::mem;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Method<'p> {
@@ -19,6 +20,11 @@ pub struct Method<'p> {
 }
 
 impl<'p> Method<'p> {
+    // i am too lazy to fork the pdb library
+    fn get_method_properties(attributes: pdb::FieldAttributes) -> u8 {
+        let value: i16 = unsafe { mem::transmute(attributes) };
+        return ((value & 0x001c) >> 2) as u8;
+    }
     pub fn find(
         name: pdb::RawString<'p>,
         attributes: pdb::FieldAttributes,
@@ -48,8 +54,8 @@ impl<'p> Method<'p> {
                 is_virtual: attributes.is_virtual()
                     | attributes.is_pure_virtual()
                     | attributes.is_intro_virtual(),
-                // FIXME: Check the `is_intro_virtual` issue.
-                is_pure_virtual: attributes.is_pure_virtual(),
+                // 0x06 = pure intro
+                is_pure_virtual: attributes.is_pure_virtual() || Method::get_method_properties(attributes) == 0x06,
                 is_ctor: data.attributes.is_constructor()
                     || data.attributes.is_constructor_with_virtual_bases(),
                 is_dtor: name.to_string().starts_with('~'),
