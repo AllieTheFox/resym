@@ -49,6 +49,7 @@ pub struct BaseClass {
     type_name: String,
     offset: u32,
     access: ClassAccess,
+    is_virtual: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -366,10 +367,14 @@ impl<'p> Class<'p> {
                     .0,
                     offset: data.offset,
                     access: ClassAccess::from_field_attribute(data.attributes.access()),
+                    is_virtual: false,
                 })
             }
 
             pdb::TypeData::VirtualBaseClass(ref data) => {
+                if !data.direct {
+                    return Ok(());
+                }
                 // Resolve the complete type's index, if present in the PDB
                 let complete_base_class_type_index =
                     resolve_complete_type_index(type_forwarder, data.base_class);
@@ -384,6 +389,7 @@ impl<'p> Class<'p> {
                     .0,
                     offset: data.base_pointer_offset,
                     access: ClassAccess::from_field_attribute(data.attributes.access()),
+                    is_virtual: true,
                 })
             }
 
@@ -441,7 +447,11 @@ impl ReconstructibleTypeData for Class<'_> {
                     0 => " :",
                     _ => ",",
                 };
-                write!(f, "{} {} {}", prefix, base.access, base.type_name)?;
+                if base.is_virtual {
+                    write!(f, "{} {} virtual {}", prefix, base.access, base.type_name)?;
+                } else {
+                    write!(f, "{} {} {}", prefix, base.access, base.type_name)?;
+                }
             }
         }
 
