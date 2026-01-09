@@ -50,6 +50,7 @@ pub struct BaseClass {
     offset: u32,
     access: ClassAccess,
     is_virtual: bool,
+    is_direct: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -368,13 +369,11 @@ impl<'p> Class<'p> {
                     offset: data.offset,
                     access: ClassAccess::from_field_attribute(data.attributes.access()),
                     is_virtual: false,
+                    is_direct: true,
                 })
             }
 
             pdb::TypeData::VirtualBaseClass(ref data) => {
-                if !data.direct {
-                    return Ok(());
-                }
                 // Resolve the complete type's index, if present in the PDB
                 let complete_base_class_type_index =
                     resolve_complete_type_index(type_forwarder, data.base_class);
@@ -390,6 +389,7 @@ impl<'p> Class<'p> {
                     offset: data.base_pointer_offset,
                     access: ClassAccess::from_field_attribute(data.attributes.access()),
                     is_virtual: true,
+                    is_direct: data.direct
                 })
             }
 
@@ -443,14 +443,16 @@ impl ReconstructibleTypeData for Class<'_> {
 
         if !self.base_classes.is_empty() {
             for (i, base) in self.base_classes.iter().enumerate() {
-                let prefix = match i {
-                    0 => " :",
-                    _ => ",",
-                };
-                if base.is_virtual {
-                    write!(f, "{} {} virtual {}", prefix, base.access, base.type_name)?;
-                } else {
-                    write!(f, "{} {} {}", prefix, base.access, base.type_name)?;
+                if base.is_direct {
+                    let prefix = match i {
+                        0 => " :",
+                        _ => ",",
+                    };
+                    if base.is_virtual {
+                        write!(f, "{} {} virtual {}", prefix, base.access, base.type_name)?;
+                    } else {
+                        write!(f, "{} {} {}", prefix, base.access, base.type_name)?;
+                    }
                 }
             }
         }
