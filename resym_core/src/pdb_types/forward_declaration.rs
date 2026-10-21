@@ -15,6 +15,14 @@ impl ReconstructibleTypeData for ForwardDeclaration {
         _fmt_configuration: &DataFormatConfiguration,
         f: &mut impl std::fmt::Write,
     ) -> fmt::Result {
+        self.reconstruct_as(&self.name, f)
+    }
+}
+
+impl ForwardDeclaration {
+    /// Writes the declaration under the given name (e.g., the unqualified
+    /// name when declared inside a namespace block).
+    pub(crate) fn reconstruct_as(&self, name: &str, f: &mut impl std::fmt::Write) -> fmt::Result {
         writeln!(
             f,
             "{} {};",
@@ -24,7 +32,7 @@ impl ReconstructibleTypeData for ForwardDeclaration {
                 ForwardDeclarationKind::Union => "union",
                 ForwardDeclarationKind::Interface => "interface",
             },
-            self.name
+            name
         )
     }
 }

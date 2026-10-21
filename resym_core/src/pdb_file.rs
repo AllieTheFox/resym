@@ -342,6 +342,7 @@ where
         ignore_std_types: bool,
         ignore_compiler_generated_methods: bool,
         preserve_member_order: bool,
+        reconstruct_namespaces: bool,
     ) -> Result<ReconstructedType> {
         // Populate our `TypeFinder` and find the right type index
         let mut type_index = TypeIndex::default();
@@ -437,6 +438,7 @@ where
                 ignore_std_types,
                 ignore_compiler_generated_methods,
                 preserve_member_order,
+                reconstruct_namespaces,
             )
         }
     }
@@ -454,6 +456,7 @@ where
         ignore_std_types: bool,
         ignore_compiler_generated_methods: bool,
         preserve_member_order: bool,
+        reconstruct_namespaces: bool,
     ) -> Result<ReconstructedType> {
         // Populate our `TypeFinder`
         let mut type_finder = self.type_information.finder();
@@ -477,6 +480,7 @@ where
             ignore_std_types,
             ignore_compiler_generated_methods,
             preserve_member_order,
+            reconstruct_namespaces,
         )
     }
 
@@ -859,6 +863,7 @@ where
         ignore_std_types: bool,
         ignore_compiler_generated_methods: bool,
         preserve_member_order: bool,
+        reconstruct_namespaces: bool,
     ) -> Result<ReconstructedType> {
         let fmt_configuration = DataFormatConfiguration {
             print_access_specifiers,
@@ -868,6 +873,7 @@ where
             print_brackets_new_line,
             ignore_compiler_generated_methods,
             preserve_member_order,
+            reconstruct_namespaces,
         };
         let mut type_data = pdb_types::Data::new(ignore_std_types);
 
@@ -904,46 +910,67 @@ where
             let mut types_to_process: VecDeque<TypeIndex> = VecDeque::from([type_index]);
             let mut processed_type_set = HashSet::new();
             // Keep processing new types until there's nothing to process
-            while let Some(needed_type_index) = types_to_process.pop_front() {
-                if processed_type_set.contains(&needed_type_index) {
-                    // Already processed, continue
-                    continue;
-                }
-
-                // Add the type
-                let mut needed_types = pdb_types::NeededTypeSet::new();
-                type_data.add(
-                    type_finder,
-                    &self.forwarder_to_complete_type,
-                    needed_type_index.into(),
-                    &primitives_flavor,
-                    &mut needed_types,
-                )?;
-                // Initialize only once, the first time (i.e., for the requested type)
-                if xrefs_from.is_empty() {
-                    let needed_types: Vec<TypeIndex> =
-                        needed_types.iter().map(|e| e.0 .0).collect();
-                    xrefs_from = self.type_list_from_type_indices(&needed_types);
-                }
-
-                for (type_index, is_pointer) in &needed_types {
-                    // Add forward declaration for types referenced by pointers
-                    if *is_pointer {
-                        type_data.add_as_forward_declaration(type_finder, *type_index)?;
+            loop {
+                while let Some(needed_type_index) = types_to_process.pop_front() {
+                    if processed_type_set.contains(&needed_type_index) {
+                        // Already processed, continue
+                        continue;
                     }
 
-                    // Update type dependency map
-                    if let Some(type_dependency) = type_dependency_map.get_mut(&needed_type_index) {
-                        type_dependency.push((type_index.0, *is_pointer));
-                    } else {
-                        type_dependency_map
-                            .insert(needed_type_index, vec![(type_index.0, *is_pointer)]);
+                    // Add the type
+                    let mut needed_types = pdb_types::NeededTypeSet::new();
+                    type_data.add(
+                        type_finder,
+                        &self.forwarder_to_complete_type,
+                        needed_type_index.into(),
+                        &primitives_flavor,
+                        &mut needed_types,
+                    )?;
+                    // Initialize only once, the first time (i.e., for the requested type)
+                    if xrefs_from.is_empty() {
+                        let needed_types: Vec<TypeIndex> =
+                            needed_types.iter().map(|e| e.0 .0).collect();
+                        xrefs_from = self.type_list_from_type_indices(&needed_types);
                     }
+
+                    for (type_index, is_pointer) in &needed_types {
+                        // Add forward declaration for types referenced by pointers
+                        if *is_pointer {
+                            type_data.add_as_forward_declaration(type_finder, *type_index)?;
+                        }
+
+                        // Update type dependency map
+                        if let Some(type_dependency) =
+                            type_dependency_map.get_mut(&needed_type_index)
+                        {
+                            type_dependency.push((type_index.0, *is_pointer));
+                        } else {
+                            type_dependency_map
+                                .insert(needed_type_index, vec![(type_index.0, *is_pointer)]);
+                        }
+                    }
+                    // Update the set of processed types
+                    processed_type_set.insert(needed_type_index);
+                    // Update the queue of type to process
+                    types_to_process.extend(needed_types.into_iter().map(|pair| pair.0 .0));
                 }
-                // Update the set of processed types
-                processed_type_set.insert(needed_type_index);
-                // Update the queue of type to process
-                types_to_process.extend(needed_types.into_iter().map(|pair| pair.0 .0));
+
+                // Nested types needed by other types are reconstructed inside
+                // the type that declares them, which must be added as well
+                let missing_containing_type_names =
+                    type_data.missing_containing_type_names(type_index.into());
+                types_to_process.extend(
+                    self.complete_type_list
+                        .iter()
+                        .filter(|(type_name, containing_type_index, _)| {
+                            !processed_type_set.contains(containing_type_index)
+                                && missing_containing_type_names.contains(type_name)
+                        })
+                        .map(|(_, containing_type_index, _)| *containing_type_index),
+                );
+                if types_to_process.is_empty() {
+                    break;
+                }
             }
 
             log::debug!(
@@ -953,7 +980,13 @@ where
         }
 
         // Deduce type "depth" from the dependency map
-        let type_depth_map = compute_type_depth_map(&type_dependency_map, &[type_index]);
+        let mut root_types = [type_index];
+        merge_inlined_nested_types(
+            &mut type_dependency_map,
+            &mut root_types,
+            &type_data.inlined_nested_types(),
+        );
+        let type_depth_map = compute_type_depth_map(&type_dependency_map, &root_types);
 
         let mut reconstruction_output = String::new();
         type_data.reconstruct(
@@ -976,6 +1009,7 @@ where
         ignore_std_types: bool,
         ignore_compiler_generated_methods: bool,
         preserve_member_order: bool,
+        reconstruct_namespaces: bool,
     ) -> Result<String> {
         let mut type_data = pdb_types::Data::new(ignore_std_types);
         let mut processed_types = Vec::new();
@@ -1043,6 +1077,11 @@ where
         }
 
         // Deduce type "depth" from the dependency map
+        merge_inlined_nested_types(
+            &mut type_dependency_map,
+            &mut processed_types,
+            &type_data.inlined_nested_types(),
+        );
         let type_depth_map = compute_type_depth_map(&type_dependency_map, &processed_types);
 
         let mut reconstruction_output = String::new();
@@ -1055,6 +1094,7 @@ where
                 print_brackets_new_line,
                 ignore_compiler_generated_methods,
                 preserve_member_order,
+                reconstruct_namespaces,
             },
             &type_depth_map,
             &mut reconstruction_output,
@@ -1435,6 +1475,40 @@ where
     }
 }
 
+/// Nested types are reconstructed inside the type that contains them, so their
+/// dependencies become dependencies of the containing type, and types that
+/// depend on a nested type depend on the containing type instead.
+fn merge_inlined_nested_types(
+    type_dependency_map: &mut HashMap<TypeIndex, Vec<(TypeIndex, bool)>>,
+    root_types: &mut [TypeIndex],
+    inlined_nested_types: &HashMap<pdb::TypeIndex, pdb::TypeIndex>,
+) {
+    if inlined_nested_types.is_empty() {
+        return;
+    }
+
+    let containing_type = |type_index: TypeIndex| {
+        inlined_nested_types
+            .get(&pdb::TypeIndex(type_index))
+            .map_or(type_index, |containing_type_index| containing_type_index.0)
+    };
+    let mut merged_dependency_map: HashMap<TypeIndex, Vec<(TypeIndex, bool)>> = HashMap::new();
+    for (type_index, dependencies) in type_dependency_map.drain() {
+        merged_dependency_map
+            .entry(containing_type(type_index))
+            .or_default()
+            .extend(
+                dependencies
+                    .into_iter()
+                    .map(|(dependency, is_pointer)| (containing_type(dependency), is_pointer)),
+            );
+    }
+    *type_dependency_map = merged_dependency_map;
+    for root_type in root_types {
+        *root_type = containing_type(*root_type);
+    }
+}
+
 fn compute_type_depth_map(
     type_dependency_map: &HashMap<TypeIndex, Vec<(TypeIndex, bool)>>,
     root_types: &[TypeIndex],
@@ -1443,20 +1517,31 @@ fn compute_type_depth_map(
 
     let mut type_depth_map: HashMap<TypeIndex, usize> =
         HashMap::from_iter(root_types.iter().map(|elem| (*elem, 0)));
-    // Perform depth-first search to determine the "depth" of each type
+    // Longest-path relaxation: a child is only revisited when its depth
+    // increases. Every type on a path but the last one has dependencies, so
+    // an acyclic path can't be longer than this. Deeper paths go around a
+    // cycle, which nested types folded into their containing type can create.
+    let max_type_depth = type_dependency_map.len() + 1;
     let mut types_to_visit: VecDeque<(usize, TypeIndex)> =
         VecDeque::from_iter(root_types.iter().map(|elem| (0, *elem)));
     while let Some((current_type_depth, current_type_index)) = types_to_visit.pop_back() {
+        if type_depth_map.get(&current_type_index) != Some(&current_type_depth) {
+            // The type has been reached through a longer path since then
+            continue;
+        }
         if let Some(type_dependencies) = type_dependency_map.get(&current_type_index) {
             for (child_type_index, child_is_pointer) in type_dependencies {
                 // Visit child only if it's directly referenced, to avoid infinite loops
                 if !child_is_pointer && *child_type_index != current_type_index {
                     let current_child_depth = current_type_depth + 1;
-                    if let Some(child_type_depth) = type_depth_map.get_mut(child_type_index) {
-                        *child_type_depth = std::cmp::max(*child_type_depth, current_child_depth);
-                    } else {
-                        type_depth_map.insert(*child_type_index, current_child_depth);
+                    if current_child_depth > max_type_depth {
+                        continue;
                     }
+                    let child_type_depth = type_depth_map.entry(*child_type_index).or_insert(0);
+                    if current_child_depth <= *child_type_depth {
+                        continue;
+                    }
+                    *child_type_depth = current_child_depth;
                     types_to_visit.push_back((current_child_depth, *child_type_index));
                 }
             }

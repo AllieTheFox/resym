@@ -41,6 +41,7 @@ fn test_struct_diffing() {
             false, // ignore_std_types
             false, // ignore_compiler_generated_methods
             false, // preserve_member_order
+            false, // reconstruct_namespaces
         )
         .expect("diff generation");
         insta::assert_snapshot!(diffed_type.data);
@@ -69,6 +70,7 @@ fn test_struct_diffing_inexistent_type() {
         false, // ignore_std_types
         false, // ignore_compiler_generated_methods
         false, // preserve_member_order
+        false, // reconstruct_namespaces
     )
     .is_err());
 }

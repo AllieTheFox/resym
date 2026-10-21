@@ -11,6 +11,9 @@
 - Add new `classes`, `unions` and `enums` filters for type searches
 - Allow navigating type and symbol lists with the keyboard via arrow up/down and page up/down (proposal by @0xeb)
 - Add a setting to print class and union members in PDB declaration order instead of grouping fields before methods (`-m`/`--preserve-member-order` in `resymc`)
+- Print a class' own vftable pointer (`__vftable`) and the vftable offset of each virtual method that introduces a vftable entry
+- Reconstruct nested types and type aliases inside the class or union that declares them
+- Add a setting to declare types inside `namespace` blocks instead of using qualified names (`-n`/`--reconstruct-namespaces` in `resymc`)
 
 ### Changed
 

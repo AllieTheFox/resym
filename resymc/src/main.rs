@@ -54,6 +54,7 @@ fn main() -> Result<()> {
             ignore_std_types,
             ignore_compiler_generated_methods,
             preserve_member_order,
+            reconstruct_namespaces,
             highlight_syntax,
         } => app.dump_types_command(
             pdb_path,
@@ -69,6 +70,7 @@ fn main() -> Result<()> {
             ignore_std_types,
             ignore_compiler_generated_methods,
             preserve_member_order,
+            reconstruct_namespaces,
             highlight_syntax,
             output_file_path,
         ),
@@ -85,6 +87,7 @@ fn main() -> Result<()> {
             ignore_std_types,
             ignore_compiler_generated_methods,
             preserve_member_order,
+            reconstruct_namespaces,
             highlight_syntax,
         } => app.dump_types_command(
             pdb_path,
@@ -100,6 +103,7 @@ fn main() -> Result<()> {
             ignore_std_types,
             ignore_compiler_generated_methods,
             preserve_member_order,
+            reconstruct_namespaces,
             highlight_syntax,
             output_file_path,
         ),
@@ -119,6 +123,7 @@ fn main() -> Result<()> {
             ignore_std_types,
             ignore_compiler_generated_methods,
             preserve_member_order,
+            reconstruct_namespaces,
             highlight_syntax,
         } => app.diff_type_command(
             from_pdb_path,
@@ -135,6 +140,7 @@ fn main() -> Result<()> {
             ignore_std_types,
             ignore_compiler_generated_methods,
             preserve_member_order,
+            reconstruct_namespaces,
             highlight_syntax,
             output_file_path,
         ),

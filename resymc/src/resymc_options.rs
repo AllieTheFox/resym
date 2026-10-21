@@ -72,6 +72,9 @@ pub enum ResymcOptions {
         /// Print fields and methods in PDB declaration order
         #[structopt(short = "m", long)]
         preserve_member_order: bool,
+        /// Wrap types in `namespace` blocks instead of using qualified names
+        #[structopt(short = "n", long)]
+        reconstruct_namespaces: bool,
         /// Highlight C++ output
         #[structopt(short = "H", long)]
         highlight_syntax: bool,
@@ -112,6 +115,9 @@ pub enum ResymcOptions {
         /// Print fields and methods in PDB declaration order
         #[structopt(short = "m", long)]
         preserve_member_order: bool,
+        /// Wrap types in `namespace` blocks instead of using qualified names
+        #[structopt(short = "n", long)]
+        reconstruct_namespaces: bool,
         /// Highlight C++ output
         #[structopt(short = "H", long)]
         highlight_syntax: bool,
@@ -159,6 +165,9 @@ pub enum ResymcOptions {
         /// Print fields and methods in PDB declaration order
         #[structopt(short = "m", long)]
         preserve_member_order: bool,
+        /// Wrap types in `namespace` blocks instead of using qualified names
+        #[structopt(short = "n", long)]
+        reconstruct_namespaces: bool,
         /// Highlight C++ output and add/deleted lines
         #[structopt(short = "H", long)]
         highlight_syntax: bool,

@@ -3,10 +3,11 @@ mod enumeration;
 mod field;
 mod forward_declaration;
 mod method;
+mod nested;
 mod primitive_types;
 mod union;
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
 use std::ops::Range;
 
@@ -516,6 +517,8 @@ pub struct Data<'p> {
     unions: BTreeMap<pdb::TypeIndex, Union<'p>>,
     /// Unique type names
     type_names: HashSet<String>,
+    /// Types declared inside another type (their qualifier isn't a namespace)
+    nested_type_indices: HashSet<pdb::TypeIndex>,
 }
 
 impl Data<'_> {
@@ -525,86 +528,197 @@ impl Data<'_> {
         type_depth_map: &BTreeMap<usize, Vec<pdb::TypeIndex>>,
         output_writer: &mut impl std::fmt::Write,
     ) -> Result<()> {
+        // Types defined inside another reconstructed type are written there
+        let inlined_nested_types = self.inlined_nested_types();
+        let mut namespace_scope = NamespaceScope::new(
+            fmt_configuration.reconstruct_namespaces,
+            &self.nested_type_indices,
+        );
+
         // Forward declarations
-        if !self.forward_declarations.is_empty() {
-            writeln!(output_writer)?;
-        }
-        for e in self.forward_declarations.values() {
+        let mut is_first_forward_declaration = true;
+        for (type_index, e) in &self.forward_declarations {
+            if inlined_nested_types.contains_key(type_index) {
+                continue;
+            }
             if self.ignore_std_types && e.name.starts_with("std::") {
                 // Type is in the `std` namespace and should be ignored
                 continue;
             }
-            e.reconstruct(fmt_configuration, output_writer)?;
+            let (name, opened_namespace) =
+                namespace_scope.enter(*type_index, &e.name, output_writer)?;
+            if is_first_forward_declaration && !opened_namespace {
+                writeln!(output_writer)?;
+            }
+            is_first_forward_declaration = false;
+            e.reconstruct_as(name, output_writer)?;
         }
 
         if !type_depth_map.is_empty() {
             // Follow type depth map order
             for type_indices in type_depth_map.values().rev() {
                 for type_index in type_indices.iter() {
-                    // Enum definitions
-                    if let Some(e) = self.enums.get(type_index) {
-                        if self.ignore_std_types && e.name.starts_with("std::") {
-                            // Type is in the `std` namespace and should be ignored
-                            continue;
-                        }
-                        writeln!(output_writer)?;
-                        e.reconstruct(fmt_configuration, output_writer)?;
+                    if inlined_nested_types.contains_key(type_index) {
+                        continue;
                     }
-                    // Class definitions
-                    else if let Some(c) = self.classes.get(type_index) {
-                        if self.ignore_std_types && c.name.starts_with("std::") {
-                            // Type is in the `std` namespace and should be ignored
-                            continue;
-                        }
-                        writeln!(output_writer)?;
-                        c.reconstruct(fmt_configuration, output_writer)?;
-                    }
-                    // Union definitions
-                    else if let Some(u) = self.unions.get(type_index) {
-                        if self.ignore_std_types && u.name.starts_with("std::") {
-                            // Type is in the `std` namespace and should be ignored
-                            continue;
-                        }
-                        writeln!(output_writer)?;
-                        u.reconstruct(fmt_configuration, output_writer)?;
-                    }
+                    self.reconstruct_definition(
+                        *type_index,
+                        fmt_configuration,
+                        &mut namespace_scope,
+                        output_writer,
+                    )?;
                 }
             }
         } else {
-            // Follow type index order
-            //
-            // Enum definitions
-            for e in self.enums.values() {
-                if self.ignore_std_types && e.name.starts_with("std::") {
-                    // Type is in the `std` namespace and should be ignored
+            // Follow type index order: enums, then classes/structs, then unions
+            let type_indices = self
+                .enums
+                .keys()
+                .chain(self.classes.keys())
+                .chain(self.unions.keys());
+            for type_index in type_indices {
+                if inlined_nested_types.contains_key(type_index) {
                     continue;
                 }
-                writeln!(output_writer)?;
-                e.reconstruct(fmt_configuration, output_writer)?;
+                self.reconstruct_definition(
+                    *type_index,
+                    fmt_configuration,
+                    &mut namespace_scope,
+                    output_writer,
+                )?;
             }
+        }
+        namespace_scope.close(output_writer)?;
 
-            // Class/struct definitions
-            for class in self.classes.values() {
-                if self.ignore_std_types && class.name.starts_with("std::") {
-                    // Type is in the `std` namespace and should be ignored
-                    continue;
-                }
-                writeln!(output_writer)?;
-                class.reconstruct(fmt_configuration, output_writer)?;
-            }
+        Ok(())
+    }
 
-            // Union definitions
-            for u in self.unions.values() {
-                if self.ignore_std_types && u.name.starts_with("std::") {
-                    // Type is in the `std` namespace and should be ignored
-                    continue;
-                }
-                writeln!(output_writer)?;
-                u.reconstruct(fmt_configuration, output_writer)?;
+    /// Writes the definition of the enum, class/struct or union with the
+    /// given index, if any.
+    fn reconstruct_definition(
+        &self,
+        type_index: pdb::TypeIndex,
+        fmt_configuration: &DataFormatConfiguration,
+        namespace_scope: &mut NamespaceScope,
+        output_writer: &mut impl std::fmt::Write,
+    ) -> fmt::Result {
+        // Enum definitions
+        if let Some(e) = self.enums.get(&type_index) {
+            if self.ignore_std_types && e.name.starts_with("std::") {
+                // Type is in the `std` namespace and should be ignored
+                return Ok(());
             }
+            let (name, _) = namespace_scope.enter(type_index, &e.name, output_writer)?;
+            writeln!(output_writer)?;
+            e.reconstruct_as(name, fmt_configuration, output_writer)?;
+        }
+        // Class definitions
+        else if let Some(c) = self.classes.get(&type_index) {
+            if self.ignore_std_types && c.name.starts_with("std::") {
+                // Type is in the `std` namespace and should be ignored
+                return Ok(());
+            }
+            let (name, _) = namespace_scope.enter(type_index, &c.name, output_writer)?;
+            writeln!(output_writer)?;
+            c.reconstruct_as(name, fmt_configuration, output_writer)?;
+        }
+        // Union definitions
+        else if let Some(u) = self.unions.get(&type_index) {
+            if self.ignore_std_types && u.name.starts_with("std::") {
+                // Type is in the `std` namespace and should be ignored
+                return Ok(());
+            }
+            let (name, _) = namespace_scope.enter(type_index, &u.name, output_writer)?;
+            writeln!(output_writer)?;
+            u.reconstruct_as(name, fmt_configuration, output_writer)?;
         }
 
         Ok(())
+    }
+
+    /// Returns the types that are also defined inside another type of this
+    /// set, mapped to the top-level type whose reconstruction contains them.
+    pub fn inlined_nested_types(&self) -> HashMap<pdb::TypeIndex, pdb::TypeIndex> {
+        let mut defining_type_by_name: HashMap<String, pdb::TypeIndex> = HashMap::new();
+        for (type_index, class) in &self.classes {
+            for nested in &class.nested_types {
+                nested.visit_type_names(&mut |name| {
+                    defining_type_by_name.insert(name.to_owned(), *type_index);
+                });
+            }
+        }
+        for (type_index, u) in &self.unions {
+            for nested in &u.nested_types {
+                nested.visit_type_names(&mut |name| {
+                    defining_type_by_name.insert(name.to_owned(), *type_index);
+                });
+            }
+        }
+        if defining_type_by_name.is_empty() {
+            return HashMap::new();
+        }
+
+        let names = self
+            .forward_declarations
+            .iter()
+            .map(|(type_index, e)| (type_index, &e.name))
+            .chain(
+                self.enums
+                    .iter()
+                    .map(|(type_index, e)| (type_index, &e.name)),
+            )
+            .chain(
+                self.classes
+                    .iter()
+                    .map(|(type_index, c)| (type_index, &c.name)),
+            )
+            .chain(
+                self.unions
+                    .iter()
+                    .map(|(type_index, u)| (type_index, &u.name)),
+            );
+        names
+            .filter_map(|(type_index, name)| {
+                defining_type_by_name
+                    .get(name)
+                    .filter(|defining_type_index| *defining_type_index != type_index)
+                    .map(|defining_type_index| (*type_index, *defining_type_index))
+            })
+            .collect()
+    }
+
+    /// Returns the names of the types declaring nested type definitions of
+    /// this set (other than `excluded_type_index`) when they aren't part of
+    /// the set. Nested types can only be defined inside their containing type.
+    pub fn missing_containing_type_names(
+        &self,
+        excluded_type_index: pdb::TypeIndex,
+    ) -> HashSet<String> {
+        let inlined_nested_types = self.inlined_nested_types();
+        let names = self
+            .enums
+            .iter()
+            .map(|(type_index, e)| (type_index, &e.name))
+            .chain(
+                self.classes
+                    .iter()
+                    .map(|(type_index, c)| (type_index, &c.name)),
+            )
+            .chain(
+                self.unions
+                    .iter()
+                    .map(|(type_index, u)| (type_index, &u.name)),
+            );
+        names
+            .filter(|(type_index, _)| {
+                **type_index != excluded_type_index
+                    && self.nested_type_indices.contains(type_index)
+                    && !inlined_nested_types.contains_key(type_index)
+            })
+            .filter_map(|(_, name)| split_qualified_name(name))
+            .map(|(containing_type_name, _)| containing_type_name.to_owned())
+            .filter(|containing_type_name| !self.type_names.contains(containing_type_name))
+            .collect()
     }
 }
 
@@ -617,6 +731,7 @@ impl<'p> Data<'p> {
             enums: BTreeMap::new(),
             unions: BTreeMap::new(),
             type_names: HashSet::new(),
+            nested_type_indices: HashSet::new(),
         }
     }
 
@@ -647,21 +762,7 @@ impl<'p> Data<'p> {
                     return Ok(());
                 }
 
-                let mut class = Class {
-                    index: type_index,
-                    kind: data.kind,
-                    name: name.clone(),
-                    size: data.size,
-                    fields: Vec::new(),
-                    static_fields: Vec::new(),
-                    base_classes: Vec::new(),
-                    instance_methods: Vec::new(),
-                    static_methods: Vec::new(),
-                    members: Vec::new(),
-                    nested_classes: Vec::new(),
-                    nested_unions: Vec::new(),
-                    nested_enums: Vec::new(),
-                };
+                let mut class = Class::new(type_index, data.kind, name.clone(), data.size);
 
                 if let Some(derived_from) = data.derived_from {
                     class.add_derived_from(type_finder, derived_from, needed_types)?;
@@ -687,6 +788,9 @@ impl<'p> Data<'p> {
                     }
                 }
 
+                if data.properties.is_nested_type() {
+                    self.nested_type_indices.insert(type_index);
+                }
                 self.type_names.insert(name);
                 self.classes.insert(type_index, class);
             }
@@ -705,19 +809,7 @@ impl<'p> Data<'p> {
                     return Ok(());
                 }
 
-                let mut u = Union {
-                    index: type_index,
-                    name: name.clone(),
-                    size: data.size,
-                    fields: Vec::new(),
-                    static_fields: Vec::new(),
-                    instance_methods: Vec::new(),
-                    static_methods: Vec::new(),
-                    members: Vec::new(),
-                    nested_classes: Vec::new(),
-                    nested_unions: Vec::new(),
-                    nested_enums: Vec::new(),
-                };
+                let mut u = Union::new(type_index, name.clone(), data.size);
 
                 if let Err(err) = u.add_fields(
                     type_finder,
@@ -733,6 +825,9 @@ impl<'p> Data<'p> {
                     );
                 }
 
+                if data.properties.is_nested_type() {
+                    self.nested_type_indices.insert(type_index);
+                }
                 self.type_names.insert(name);
                 self.unions.insert(type_index, u);
             }
@@ -773,6 +868,9 @@ impl<'p> Data<'p> {
                     );
                 }
 
+                if data.properties.is_nested_type() {
+                    self.nested_type_indices.insert(type_index);
+                }
                 self.type_names.insert(name.clone());
                 self.enums.insert(type_index, e);
             }
@@ -799,6 +897,9 @@ impl<'p> Data<'p> {
                     name_str.into_owned()
                 };
 
+                if data.properties.is_nested_type() {
+                    self.nested_type_indices.insert(type_index);
+                }
                 self.forward_declarations.insert(
                     type_index,
                     ForwardDeclaration {
@@ -818,6 +919,9 @@ impl<'p> Data<'p> {
                     name_str.into_owned()
                 };
 
+                if data.properties.is_nested_type() {
+                    self.nested_type_indices.insert(type_index);
+                }
                 self.forward_declarations.insert(
                     type_index,
                     ForwardDeclaration {
@@ -833,6 +937,147 @@ impl<'p> Data<'p> {
 
         Ok(())
     }
+}
+
+/// Writes top-level declarations inside `namespace` blocks matching their
+/// qualified names, opening and closing blocks when the namespace changes.
+struct NamespaceScope<'n> {
+    enabled: bool,
+    /// Types whose qualifier is their containing type, not a namespace
+    nested_type_indices: &'n HashSet<pdb::TypeIndex>,
+    current_namespace: Option<String>,
+}
+
+impl<'n> NamespaceScope<'n> {
+    fn new(enabled: bool, nested_type_indices: &'n HashSet<pdb::TypeIndex>) -> Self {
+        Self {
+            enabled,
+            nested_type_indices,
+            current_namespace: None,
+        }
+    }
+
+    /// Moves to the namespace of the type named `name`. Returns the name the
+    /// type should be declared with there, and whether a namespace block was
+    /// opened (preceded by a blank line).
+    ///
+    /// Types whose qualifier can't be written as a namespace (nested types and
+    /// types declared in a function) keep their qualified name and are written
+    /// outside of any namespace block.
+    fn enter<'a>(
+        &mut self,
+        type_index: pdb::TypeIndex,
+        name: &'a str,
+        f: &mut impl std::fmt::Write,
+    ) -> std::result::Result<(&'a str, bool), fmt::Error> {
+        let (namespace, unqualified_name) =
+            if self.enabled && !self.nested_type_indices.contains(&type_index) {
+                match split_qualified_name(name) {
+                    Some((namespace, unqualified_name)) if is_namespace_path(namespace) => {
+                        (Some(namespace), unqualified_name)
+                    }
+                    _ => (None, name),
+                }
+            } else {
+                (None, name)
+            };
+
+        let mut opened_namespace = false;
+        if self.current_namespace.as_deref() != namespace {
+            self.close(f)?;
+            if let Some(namespace) = namespace {
+                writeln!(f)?;
+                if namespace.split("::").any(|c| c == ANONYMOUS_NAMESPACE) {
+                    // `namespace a::b` can't name an anonymous namespace
+                    let openings: Vec<String> = namespace
+                        .split("::")
+                        .map(|component| {
+                            if component == ANONYMOUS_NAMESPACE {
+                                "namespace {".to_owned()
+                            } else {
+                                format!("namespace {component} {{")
+                            }
+                        })
+                        .collect();
+                    writeln!(f, "{}", openings.join(" "))?;
+                } else {
+                    writeln!(f, "namespace {namespace} {{")?;
+                }
+                self.current_namespace = Some(namespace.to_owned());
+                opened_namespace = true;
+            }
+        }
+
+        Ok((unqualified_name, opened_namespace))
+    }
+
+    /// Closes the current namespace block, if any.
+    fn close(&mut self, f: &mut impl std::fmt::Write) -> fmt::Result {
+        if let Some(namespace) = self.current_namespace.take() {
+            let block_count = if namespace.split("::").any(|c| c == ANONYMOUS_NAMESPACE) {
+                namespace.split("::").count()
+            } else {
+                1
+            };
+            writeln!(
+                f,
+                "{} // namespace {}",
+                "}".repeat(block_count),
+                namespace.replace(ANONYMOUS_NAMESPACE, "(anonymous)")
+            )?;
+        }
+
+        Ok(())
+    }
+}
+
+/// Name MSVC gives to anonymous namespaces in qualified type names (verified
+/// with MSVC 14.51 PDBs)
+const ANONYMOUS_NAMESPACE: &str = "`anonymous-namespace'";
+
+/// Splits a qualified name at its last `::` that isn't part of template
+/// arguments, returning the qualifier and the unqualified name.
+fn split_qualified_name(name: &str) -> Option<(&str, &str)> {
+    let mut depth: usize = 0;
+    let mut split_position = None;
+    let bytes = name.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'<' | b'(' | b'[' => depth += 1,
+            b'>' | b')' | b']' => depth = depth.saturating_sub(1),
+            b':' if depth == 0 && bytes.get(i + 1) == Some(&b':') => {
+                split_position = Some(i);
+                i += 1;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+
+    split_position.map(|position| (&name[..position], &name[position + 2..]))
+}
+
+/// Indicates if every component of `qualifier` can be written as a C++
+/// namespace name.
+///
+/// Types declared in a function are qualified with the function's name and a
+/// lexical block component (e.g., `Function::__l2::Type`), which isn't a
+/// namespace.
+fn is_namespace_path(qualifier: &str) -> bool {
+    qualifier.split("::").all(|component| {
+        let is_lexical_block = component
+            .strip_prefix("__l")
+            .is_some_and(|block| !block.is_empty() && block.bytes().all(|c| c.is_ascii_digit()));
+        let is_identifier = component
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+            && component
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_');
+        component == ANONYMOUS_NAMESPACE || (is_identifier && !is_lexical_block)
+    })
 }
 
 pub fn resolve_complete_type_index(
@@ -1218,6 +1463,9 @@ pub struct DataFormatConfiguration {
     /// Print fields and methods in their PDB declaration order instead of
     /// grouping fields before methods.
     pub preserve_member_order: bool,
+    /// Wrap types in `namespace` blocks instead of declaring them with their
+    /// qualified names.
+    pub reconstruct_namespaces: bool,
     pub print_offset_info: bool,
     pub print_brackets_new_line: bool,
 }
@@ -1230,6 +1478,7 @@ impl Default for DataFormatConfiguration {
             integers_as_hexadecimal: true,
             ignore_compiler_generated_methods: true,
             preserve_member_order: true,
+            reconstruct_namespaces: true,
             print_offset_info: true,
             print_brackets_new_line: false,
         }
@@ -1241,8 +1490,28 @@ impl Default for DataFormatConfiguration {
 /// matching member vector.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MemberRef {
+    NestedType(usize),
     Field(usize),
     StaticField(usize),
     InstanceMethod(usize),
     StaticMethod(usize),
+}
+
+/// Kind of a run of members printed in PDB order. Runs of different kinds are
+/// separated by a blank line.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MemberKind {
+    NestedType,
+    Data,
+    Method,
+}
+
+impl MemberRef {
+    fn kind(self) -> MemberKind {
+        match self {
+            MemberRef::NestedType(_) => MemberKind::NestedType,
+            MemberRef::Field(_) | MemberRef::StaticField(_) => MemberKind::Data,
+            MemberRef::InstanceMethod(_) | MemberRef::StaticMethod(_) => MemberKind::Method,
+        }
+    }
 }

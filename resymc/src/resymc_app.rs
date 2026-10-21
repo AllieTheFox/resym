@@ -106,6 +106,7 @@ impl ResymcApp {
         ignore_std_types: bool,
         ignore_compiler_generated_methods: bool,
         preserve_member_order: bool,
+        reconstruct_namespaces: bool,
         highlight_syntax: bool,
         output_file_path: Option<PathBuf>,
     ) -> Result<()> {
@@ -138,6 +139,7 @@ impl ResymcApp {
                     ignore_std_types,
                     ignore_compiler_generated_methods,
                     preserve_member_order,
+                    reconstruct_namespaces,
                 ))?;
         } else {
             self.backend
@@ -153,6 +155,7 @@ impl ResymcApp {
                     ignore_std_types,
                     ignore_compiler_generated_methods,
                     preserve_member_order,
+                    reconstruct_namespaces,
                 ))?;
         }
         // Wait for the backend to finish filtering types
@@ -198,6 +201,7 @@ impl ResymcApp {
         ignore_std_types: bool,
         ignore_compiler_generated_methods: bool,
         preserve_member_order: bool,
+        reconstruct_namespaces: bool,
         highlight_syntax: bool,
         output_file_path: Option<PathBuf>,
     ) -> Result<()> {
@@ -253,6 +257,7 @@ impl ResymcApp {
             ignore_std_types,
             ignore_compiler_generated_methods,
             preserve_member_order,
+            reconstruct_namespaces,
         ))?;
         // Wait for the backend to finish
         if let FrontendCommand::DiffResult(reconstructed_type_diff_result) =
@@ -819,6 +824,7 @@ mod tests {
                 false, // ignore_std_types
                 false, // ignore_compiler_generated_methods
                 false, // preserve_member_order
+                false, // reconstruct_namespaces
                 false, // highlight_syntax
                 None
             )
@@ -846,6 +852,7 @@ mod tests {
                 true,  // ignore_std_types
                 true,  // ignore_compiler_generated_methods
                 true,  // preserve_member_order
+                true,  // reconstruct_namespaces
                 true,  // highlight_syntax
                 None
             )
@@ -876,6 +883,7 @@ mod tests {
                 false, // ignore_std_types
                 false, // ignore_compiler_generated_methods
                 false, // preserve_member_order
+                false, // reconstruct_namespaces
                 false, // highlight_syntax
                 Some(output_path.clone()),
             )
@@ -885,7 +893,23 @@ mod tests {
         let output = fs::read_to_string(output_path).expect("Failed to read output file");
         assert_eq!(
             output,
-            concat!("\nclass resym_test::ClassWithNestedDeclarationsTest { /* Size=0x1 */\n};\n")
+            concat!(
+                "\nclass resym_test::ClassWithNestedDeclarationsTest { /* Size=0x1 */\n",
+                "  \n",
+                "  struct NestedStruct { /* Size=0x4 */\n",
+                "    /* 0x0000 */ LONG field;\n",
+                "  };\n",
+                "  class NestedClass { /* Size=0x4 */\n",
+                "    /* 0x0000 */ LONG field;\n",
+                "  };\n",
+                "  union NestedUnion { /* Size=0x4 */\n",
+                "    /* 0x0000 */ LONG field;\n",
+                "  };\n",
+                "  enum NestEnum : LONG {\n",
+                "    kHello = 0,\n",
+                "  };\n",
+                "};\n"
+            )
         );
     }
 
@@ -913,6 +937,7 @@ mod tests {
                 false, // ignore_std_types
                 false, // ignore_compiler_generated_methods
                 false, // preserve_member_order
+                false, // reconstruct_namespaces
                 false, // highlight_syntax
                 None   // output_file_path
             )
@@ -941,6 +966,7 @@ mod tests {
                 true,  // ignore_std_types
                 false, // ignore_compiler_generated_methods
                 true,  // preserve_member_order
+                true,  // reconstruct_namespaces
                 true,  // highlight_syntax
                 None   // output_file_path
             )
@@ -974,6 +1000,7 @@ mod tests {
                 false, // ignore_std_types
                 false, // ignore_compiler_generated_methods
                 false, // preserve_member_order
+                false, // reconstruct_namespaces
                 false, // highlight_syntax
                 Some(output_path.clone()),
             )

@@ -3,6 +3,7 @@ source: resym_core/tests/type_reconstruction.rs
 expression: reconstructed_type
 ---
 struct resym_test::StructTest {
+  void* __vftable;
   unsigned char u1;
   uint16_t u2;
   uint32_t u3;

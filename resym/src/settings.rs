@@ -30,6 +30,8 @@ pub struct ResymAppSettings {
     pub ignore_compiler_generated_methods: bool,
     // Print fields and methods in PDB declaration order
     pub preserve_member_order: bool,
+    // Wrap types in `namespace` blocks instead of using qualified names
+    pub reconstruct_namespaces: bool,
 }
 
 impl Default for ResymAppSettings {
@@ -52,6 +54,7 @@ impl Default for ResymAppSettings {
             print_line_numbers: false,
             ignore_compiler_generated_methods: true,
             preserve_member_order: true,
+            reconstruct_namespaces: true,
         }
     }
 }

@@ -3,6 +3,7 @@ source: resym_core/tests/type_reconstruction.rs
 expression: reconstructed_type
 ---
 struct resym_test::StructTest { /* Size=0x18 */
+  /* 0x0000 */ void* __vftable;
   /* 0x0008 */ public: unsigned char u1;
   /* 0x000a */ public: unsigned short u2;
   /* 0x000c */ public: unsigned int u3;
@@ -17,7 +18,7 @@ struct resym_test::StructTest { /* Size=0x18 */
   public: void* VolatileMethod() volatile;
   public: void* ConstVolatileMethod() const volatile;
   public: void (*ReturnFuncPointerMethod())(int);
-  public: virtual int Virtual();
+  public: virtual int Virtual(); /* vftable+0x0 */
   public: resym_test::StructTest& operator=(const resym_test::StructTest&);
   public: void* __vecDelDtor(unsigned int);
   

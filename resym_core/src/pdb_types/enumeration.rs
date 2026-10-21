@@ -63,10 +63,23 @@ impl ReconstructibleTypeData for Enum<'_> {
         fmt_configuration: &DataFormatConfiguration,
         f: &mut impl std::fmt::Write,
     ) -> fmt::Result {
+        self.reconstruct_as(&self.name, fmt_configuration, f)
+    }
+}
+
+impl Enum<'_> {
+    /// Reconstructs the enum under the given name (e.g., the unqualified name
+    /// when declared inside its parent type).
+    pub(crate) fn reconstruct_as(
+        &self,
+        name: &str,
+        fmt_configuration: &DataFormatConfiguration,
+        f: &mut impl std::fmt::Write,
+    ) -> fmt::Result {
         writeln!(
             f,
             "enum {} : {}{}{{",
-            self.name,
+            name,
             self.underlying_type_name,
             if fmt_configuration.print_brackets_new_line {
                 "\n"

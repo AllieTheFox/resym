@@ -17,6 +17,9 @@ pub struct Method<'p> {
     pub is_const: bool,
     pub is_volatile: bool,
     pub is_compiler_generated: bool, 
+    /// Byte offset of the vftable entry this method introduces, if any.
+    /// Only set for introducing virtual methods of classes.
+    pub vtable_offset: Option<u32>,
     pub access: FieldAccess,
 }
 
@@ -79,6 +82,7 @@ impl<'p> Method<'p> {
                     }
                 },
                 is_compiler_generated: Method::get_is_compiler_generated(attributes),
+                vtable_offset: None,
                 access: FieldAccess::from_field_attribute(attributes.access()),
             }),
 

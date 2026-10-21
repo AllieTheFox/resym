@@ -81,8 +81,11 @@ syntax highlighting (and/or dependency reconstruction altogether) will help but,
 generally speaking, the CLI version is more suited when dumping types with a huge
 amount of dependencies.
 
-C++ namespaces and template types aren't reconstructed at the moment, which
-means the reconstructed output for C++ types isn't necessarily compilable.
+C++ template types aren't reconstructed at the moment, which means the
+reconstructed output for C++ types isn't necessarily compilable. Namespaces are
+reconstructed when the "Reconstruct namespaces" setting is enabled (`-n` in
+`resymc`), but types in anonymous namespaces are still referenced with their
+PDB name (`` `anonymous-namespace'::Type ``).
 
 The web version cannot handle PDB files larger than ~2.1 GB due to how files
 are accessed and the 32-bit limitations of `wasm32` targets. This might change

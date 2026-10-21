@@ -1,15 +1,14 @@
 use std::fmt;
 
 use super::{
-    class::Class,
-    enumeration::Enum,
     field::{FieldAccess, StaticField},
-    fmt_union_fields_interleaved, fmt_union_fields_recursive, is_unnamed_type,
+    fmt_union_fields_interleaved, fmt_union_fields_recursive,
+    nested::NestedDeclaration,
     primitive_types::AccessSpecifierReconstructionFlavor,
     primitive_types::PrimitiveReconstructionFlavor,
     primitive_types::SizePrintFlavor,
     resolve_complete_type_index, type_bitfield_info, type_name, type_size, DataFormatConfiguration,
-    Field, MemberRef, Method, NeededTypeSet, ReconstructibleTypeData, TypeForwarder,
+    Field, MemberKind, MemberRef, Method, NeededTypeSet, ReconstructibleTypeData, TypeForwarder,
 };
 use crate::error::{Result, ResymCoreError};
 
@@ -24,12 +23,25 @@ pub struct Union<'p> {
     pub static_methods: Vec<Method<'p>>,
     /// Fields and methods in PDB declaration order
     pub members: Vec<MemberRef>,
-    pub nested_classes: Vec<Class<'p>>,
-    pub nested_unions: Vec<Union<'p>>,
-    pub nested_enums: Vec<Enum<'p>>,
+    /// Types and typedefs declared inside the union, in PDB order
+    pub nested_types: Vec<NestedDeclaration<'p>>,
 }
 
 impl<'p> Union<'p> {
+    pub fn new(index: pdb::TypeIndex, name: String, size: u64) -> Self {
+        Self {
+            index,
+            name,
+            size,
+            fields: Vec::new(),
+            static_fields: Vec::new(),
+            instance_methods: Vec::new(),
+            static_methods: Vec::new(),
+            members: Vec::new(),
+            nested_types: Vec::new(),
+        }
+    }
+
     pub fn add_fields(
         &mut self,
         type_finder: &pdb::TypeFinder<'p>,
@@ -64,111 +76,6 @@ impl<'p> Union<'p> {
                 }
             }
 
-            // Nested types
-            pdb::TypeData::Class(data) => {
-                let name_str = data.name.to_string();
-                // Rename unnamed anonymous tags to something unique
-                let name = if is_unnamed_type(&name_str) {
-                    format!("_unnamed_{type_index}")
-                } else {
-                    name_str.into_owned()
-                };
-
-                let mut class = Class {
-                    index: type_index,
-                    kind: data.kind,
-                    name,
-                    size: data.size,
-                    fields: Vec::new(),
-                    static_fields: Vec::new(),
-                    base_classes: Vec::new(),
-                    instance_methods: Vec::new(),
-                    static_methods: Vec::new(),
-                    members: Vec::new(),
-                    nested_classes: Vec::new(),
-                    nested_unions: Vec::new(),
-                    nested_enums: Vec::new(),
-                };
-
-                if let Some(derived_from) = data.derived_from {
-                    class.add_derived_from(type_finder, derived_from, needed_types)?;
-                }
-
-                if let Some(fields) = data.fields {
-                    class.add_fields(
-                        type_finder,
-                        type_forwarder,
-                        fields,
-                        primitive_flavor,
-                        needed_types,
-                    )?;
-                }
-
-                self.nested_classes.insert(0, class);
-            }
-
-            pdb::TypeData::Union(data) => {
-                let name_str = data.name.to_string();
-                // Rename unnamed anonymous tags to something unique
-                let name = if is_unnamed_type(&name_str) {
-                    format!("_unnamed_{type_index}")
-                } else {
-                    name_str.into_owned()
-                };
-
-                let mut u = Union {
-                    index: type_index,
-                    name,
-                    size: data.size,
-                    fields: Vec::new(),
-                    static_fields: Vec::new(),
-                    instance_methods: Vec::new(),
-                    static_methods: Vec::new(),
-                    members: Vec::new(),
-                    nested_classes: Vec::new(),
-                    nested_unions: Vec::new(),
-                    nested_enums: Vec::new(),
-                };
-
-                u.add_fields(
-                    type_finder,
-                    type_forwarder,
-                    data.fields,
-                    primitive_flavor,
-                    needed_types,
-                )?;
-
-                self.nested_unions.insert(0, u);
-            }
-
-            pdb::TypeData::Enumeration(data) => {
-                let name_str = data.name.to_string();
-                // Rename unnamed anonymous tags to something unique
-                let name = if is_unnamed_type(&name_str) {
-                    format!("_unnamed_{type_index}")
-                } else {
-                    name_str.into_owned()
-                };
-
-                let mut e = Enum {
-                    index: type_index,
-                    name,
-                    underlying_type_name: type_name(
-                        type_finder,
-                        type_forwarder,
-                        data.underlying_type,
-                        primitive_flavor,
-                        needed_types,
-                    )?
-                    .0,
-                    values: Vec::new(),
-                };
-
-                e.add_fields(type_finder, data.fields, needed_types)?;
-
-                self.nested_enums.insert(0, e);
-            }
-
             pdb::TypeData::Primitive(_) | pdb::TypeData::Pointer(_) => {
                 // TODO: What does this represent?
             }
@@ -193,8 +100,8 @@ impl<'p> Union<'p> {
         primitive_flavor: &PrimitiveReconstructionFlavor,
         needed_types: &mut NeededTypeSet,
     ) -> Result<()> {
-        match *field {
-            pdb::TypeData::Member(ref data) => {
+        match field {
+            pdb::TypeData::Member(data) => {
                 // Resolve the complete type's index, if present in the PDB
                 let complete_type_index =
                     resolve_complete_type_index(type_forwarder, data.field_type);
@@ -222,7 +129,7 @@ impl<'p> Union<'p> {
                 });
             }
 
-            pdb::TypeData::StaticMember(ref data) => {
+            pdb::TypeData::StaticMember(data) => {
                 let complete_type_index =
                     resolve_complete_type_index(type_forwarder, data.field_type);
                 let (type_left, type_right) = type_name(
@@ -244,7 +151,7 @@ impl<'p> Union<'p> {
                 });
             }
 
-            pdb::TypeData::Method(ref data) => {
+            pdb::TypeData::Method(data) => {
                 let method = Method::find(
                     data.name,
                     data.attributes,
@@ -258,19 +165,22 @@ impl<'p> Union<'p> {
             }
 
             // Nested type declaration
-            pdb::TypeData::Nested(ref _data) => {
-                // TODO: Properly handle nested types
-                // let complete_type_index =
-                //     resolve_complete_type_index(type_forwarder, data.nested_type);
-                // self.add_fields(
-                //     type_finder,
-                //     type_forwarder,
-                //     complete_type_index,
-                //     needed_types,
-                // )?;
+            pdb::TypeData::Nested(data) => {
+                if let Some(nested) = NestedDeclaration::parse(
+                    &self.name,
+                    data,
+                    type_finder,
+                    type_forwarder,
+                    primitive_flavor,
+                    needed_types,
+                )? {
+                    self.members
+                        .push(MemberRef::NestedType(self.nested_types.len()));
+                    self.nested_types.push(nested);
+                }
             }
 
-            pdb::TypeData::OverloadedMethod(ref data) => {
+            pdb::TypeData::OverloadedMethod(data) => {
                 // this just means we have more than one method with the same name
                 // find the method list
                 match type_finder.find(data.method_list)?.parse()? {
@@ -308,7 +218,7 @@ impl<'p> Union<'p> {
                 }
             }
 
-            ref other => {
+            other => {
                 log::error!("trying to Union::add_field(): {:?}", other);
                 return Err(ResymCoreError::InvalidParameterError(
                     "unexpected type in Union::add_field()".to_string(),
@@ -326,10 +236,23 @@ impl ReconstructibleTypeData for Union<'_> {
         fmt_configuration: &DataFormatConfiguration,
         f: &mut impl std::fmt::Write,
     ) -> fmt::Result {
+        self.reconstruct_as(&self.name, fmt_configuration, f)
+    }
+}
+
+impl Union<'_> {
+    /// Reconstructs the union under the given name (e.g., the unqualified
+    /// name when declared inside its parent type).
+    pub(crate) fn reconstruct_as(
+        &self,
+        name: &str,
+        fmt_configuration: &DataFormatConfiguration,
+        f: &mut impl std::fmt::Write,
+    ) -> fmt::Result {
         writeln!(
             f,
             "union {}{}{{{}",
-            self.name,
+            name,
             if fmt_configuration.print_brackets_new_line {
                 "\n"
             } else {
@@ -342,23 +265,12 @@ impl ReconstructibleTypeData for Union<'_> {
             }
         )?;
 
-        // Nested delcarations
-        if !self.nested_classes.is_empty() {
+        // Nested declarations (written in PDB order with the other members
+        // when preserving member order)
+        if !fmt_configuration.preserve_member_order && !self.nested_types.is_empty() {
             writeln!(f, "  ")?;
-            for class in &self.nested_classes {
-                class.reconstruct(fmt_configuration, f)?;
-            }
-        }
-        if !self.nested_unions.is_empty() {
-            writeln!(f, "  ")?;
-            for u in &self.nested_unions {
-                u.reconstruct(fmt_configuration, f)?;
-            }
-        }
-        if !self.nested_enums.is_empty() {
-            writeln!(f, "  ")?;
-            for e in &self.nested_enums {
-                e.reconstruct(fmt_configuration, f)?;
+            for nested in &self.nested_types {
+                nested.reconstruct(fmt_configuration, false, f)?;
             }
         }
 
@@ -394,13 +306,13 @@ impl ReconstructibleTypeData for Union<'_> {
                 writeln!(
                     f,
                     "static_assert(sizeof({}) == {:#x}); // {}",
-                    self.name, self.size, self.size
+                    name, self.size, self.size
                 )?;
             } else {
                 writeln!(
                     f,
                     "static_assert(sizeof({}) == {}); // {:#x}",
-                    self.name, self.size, self.size
+                    name, self.size, self.size
                 )?;
             }
         }
@@ -437,31 +349,31 @@ impl<'p> Union<'p> {
         }
 
         let mut next_position = 0;
-        let mut last_was_method = false;
+        let mut last_kind = MemberKind::Data;
         fmt_union_fields_interleaved(fmt_configuration, &self.fields, 1, f, |field_index, f| {
             self.fmt_non_field_members(
                 fmt_configuration,
                 field_positions[field_index],
                 &mut next_position,
-                &mut last_was_method,
+                &mut last_kind,
                 f,
             )?;
-            if last_was_method {
+            if last_kind != MemberKind::Data {
                 writeln!(f, "  ")?;
             }
-            last_was_method = false;
+            last_kind = MemberKind::Data;
             Ok(())
         })?;
         self.fmt_non_field_members(
             fmt_configuration,
             self.members.len(),
             &mut next_position,
-            &mut last_was_method,
+            &mut last_kind,
             f,
         )
     }
 
-    /// Writes the static fields and methods found in
+    /// Writes the nested types, static fields and methods found in
     /// `self.members[*next_position..end_position]`, skipping instance fields
     /// which are written by `fmt_union_fields_interleaved`.
     fn fmt_non_field_members(
@@ -469,25 +381,26 @@ impl<'p> Union<'p> {
         fmt_configuration: &DataFormatConfiguration,
         end_position: usize,
         next_position: &mut usize,
-        last_was_method: &mut bool,
+        last_kind: &mut MemberKind,
         f: &mut impl std::fmt::Write,
     ) -> fmt::Result {
         while *next_position < end_position {
             let member = self.members[*next_position];
             *next_position += 1;
 
-            let is_method = match member {
-                MemberRef::Field(_) => continue,
-                MemberRef::StaticField(_) => false,
-                MemberRef::InstanceMethod(_) | MemberRef::StaticMethod(_) => true,
-            };
-            if *last_was_method != is_method {
+            if let MemberRef::Field(_) = member {
+                continue;
+            }
+            if *last_kind != member.kind() {
                 writeln!(f, "  ")?;
             }
-            *last_was_method = is_method;
+            *last_kind = member.kind();
 
             match member {
                 MemberRef::Field(_) => unreachable!("instance fields are skipped above"),
+                MemberRef::NestedType(index) => {
+                    self.nested_types[index].reconstruct(fmt_configuration, false, f)?
+                }
                 MemberRef::StaticField(index) => {
                     Self::fmt_static_field(fmt_configuration, &self.static_fields[index], f)?
                 }

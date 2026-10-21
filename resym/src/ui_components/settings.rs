@@ -121,6 +121,10 @@ impl SettingsComponent {
                             &mut self.app_settings.preserve_member_order,
                             "Preserve PDB member order",
                         );
+                        ui.checkbox(
+                            &mut self.app_settings.reconstruct_namespaces,
+                            "Reconstruct namespaces",
+                        );
                         ui.label(
                             egui::RichText::new("Print size comments")
                                 .color(ui.style().visuals.widgets.inactive.text_color()),
