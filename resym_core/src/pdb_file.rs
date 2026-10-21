@@ -1385,7 +1385,6 @@ where
 
             // Public symbols
             pdb::SymbolData::Public(data) => {
-                println!("{:x} {:x}", data.offset.offset, data.offset.section);
                 let symbol_rva = symbol_rva(&data.offset, &self.address_map)
                     .map(|offset| format!("RVA=0x{:x} ", offset))
                     .unwrap_or_default();

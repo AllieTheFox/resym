@@ -128,8 +128,8 @@ fn main() -> Result<()> {
             print_offset_info,
             print_brackets_new_line,
             ignore_std_types,
-            highlight_syntax,
             ignore_compiler_generated_methods,
+            highlight_syntax,
             output_file_path,
         ),
         ResymcOptions::ListModules {

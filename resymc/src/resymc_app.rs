@@ -929,8 +929,8 @@ mod tests {
                 false, // integers_as_hexadecimal
                 true,  // print_offset_info
                 false, // print_brackets_new_line
-                false, // ignore_compiler_generated_methods
                 true,  // ignore_std_types
+                false, // ignore_compiler_generated_methods
                 true,  // highlight_syntax
                 None   // output_file_path
             )
@@ -962,6 +962,7 @@ mod tests {
                 true,  // print_offset_info
                 false, // print_brackets_new_line
                 false, // ignore_std_types
+                false, // ignore_compiler_generated_methods
                 false, // highlight_syntax
                 Some(output_path.clone()),
             )

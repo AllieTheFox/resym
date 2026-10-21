@@ -177,6 +177,7 @@ fn test_type_reconstruction_internal(
                 print_offset_info,
                 print_brackets_new_line,
                 ignore_std_types,
+                false, // ignore_compiler_generated_methods
             )
             .unwrap_or_else(|_| panic!("reconstruct type: {test_case_type_name}"));
 
