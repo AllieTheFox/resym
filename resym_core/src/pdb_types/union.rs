@@ -4,12 +4,12 @@ use super::{
     class::Class,
     enumeration::Enum,
     field::{FieldAccess, StaticField},
-    fmt_union_fields_recursive, is_unnamed_type,
+    fmt_union_fields_interleaved, fmt_union_fields_recursive, is_unnamed_type,
     primitive_types::AccessSpecifierReconstructionFlavor,
     primitive_types::PrimitiveReconstructionFlavor,
     primitive_types::SizePrintFlavor,
     resolve_complete_type_index, type_bitfield_info, type_name, type_size, DataFormatConfiguration,
-    Field, Method, NeededTypeSet, ReconstructibleTypeData, TypeForwarder,
+    Field, MemberRef, Method, NeededTypeSet, ReconstructibleTypeData, TypeForwarder,
 };
 use crate::error::{Result, ResymCoreError};
 
@@ -22,6 +22,8 @@ pub struct Union<'p> {
     pub static_fields: Vec<StaticField<'p>>,
     pub instance_methods: Vec<Method<'p>>,
     pub static_methods: Vec<Method<'p>>,
+    /// Fields and methods in PDB declaration order
+    pub members: Vec<MemberRef>,
     pub nested_classes: Vec<Class<'p>>,
     pub nested_unions: Vec<Union<'p>>,
     pub nested_enums: Vec<Enum<'p>>,
@@ -82,6 +84,7 @@ impl<'p> Union<'p> {
                     base_classes: Vec::new(),
                     instance_methods: Vec::new(),
                     static_methods: Vec::new(),
+                    members: Vec::new(),
                     nested_classes: Vec::new(),
                     nested_unions: Vec::new(),
                     nested_enums: Vec::new(),
@@ -121,6 +124,7 @@ impl<'p> Union<'p> {
                     static_fields: Vec::new(),
                     instance_methods: Vec::new(),
                     static_methods: Vec::new(),
+                    members: Vec::new(),
                     nested_classes: Vec::new(),
                     nested_unions: Vec::new(),
                     nested_enums: Vec::new(),
@@ -206,6 +210,7 @@ impl<'p> Union<'p> {
                 let access = FieldAccess::from_field_attribute(data.attributes.access());
 
                 // TODO: attributes (static, virtual, etc.)
+                self.members.push(MemberRef::Field(self.fields.len()));
                 self.fields.push(Field {
                     type_left,
                     type_right,
@@ -229,6 +234,8 @@ impl<'p> Union<'p> {
                 )?;
                 let access = FieldAccess::from_field_attribute(data.attributes.access());
 
+                self.members
+                    .push(MemberRef::StaticField(self.static_fields.len()));
                 self.static_fields.push(StaticField {
                     type_left,
                     type_right,
@@ -247,11 +254,7 @@ impl<'p> Union<'p> {
                     primitive_flavor,
                     needed_types,
                 )?;
-                if data.attributes.is_static() {
-                    self.static_methods.push(method);
-                } else {
-                    self.instance_methods.push(method);
-                }
+                self.push_method(method, data.attributes.is_static());
             }
 
             // Nested type declaration
@@ -289,11 +292,7 @@ impl<'p> Union<'p> {
                                 needed_types,
                             )?;
 
-                            if attributes.is_static() {
-                                self.static_methods.push(method);
-                            } else {
-                                self.instance_methods.push(method);
-                            }
+                            self.push_method(method, attributes.is_static());
                         }
                     }
                     other => {
@@ -363,109 +362,29 @@ impl ReconstructibleTypeData for Union<'_> {
             }
         }
 
-        // Dump fields while detecting unnamed structs and unions
-        fmt_union_fields_recursive(fmt_configuration, &self.fields, 1, f)?;
+        if fmt_configuration.preserve_member_order {
+            self.fmt_members_in_order(fmt_configuration, f)?;
+        } else {
+            // Dump fields while detecting unnamed structs and unions
+            fmt_union_fields_recursive(fmt_configuration, &self.fields, 1, f)?;
 
-        // Static fields
-        for field in &self.static_fields {
-            writeln!(
-                f,
-                "  {}static {} {}{};",
-                match fmt_configuration.print_access_specifiers {
-                    AccessSpecifierReconstructionFlavor::Disabled => &FieldAccess::None,
-                    AccessSpecifierReconstructionFlavor::Always => &field.access,
-                    AccessSpecifierReconstructionFlavor::Automatic => {
-                        if field.access != FieldAccess::Public {
-                            &field.access
-                        } else {
-                            &FieldAccess::None
-                        }
-                    }
-                },
-                field.type_left,
-                &field.name,
-                field.type_right,
-            )?;
-        }
-
-        if !self.instance_methods.is_empty() {
-            writeln!(f, "  ")?;
-            for method in &self.instance_methods {
-                writeln!(
-                    f,
-                    "  {}{}{}{}{}({}){}{}{}{};",
-                    match fmt_configuration.print_access_specifiers {
-                        AccessSpecifierReconstructionFlavor::Disabled => &FieldAccess::None,
-                        AccessSpecifierReconstructionFlavor::Always => &method.access,
-                        AccessSpecifierReconstructionFlavor::Automatic => {
-                            if method.access != FieldAccess::Public {
-                                &method.access
-                            } else {
-                                &FieldAccess::None
-                            }
-                        }
-                    },
-                    if method.is_virtual { "virtual " } else { "" },
-                    if method.is_ctor || method.is_dtor {
-                        ""
-                    } else {
-                        &method.return_type_name.0
-                    },
-                    if !method.is_ctor && !method.is_dtor && method.return_type_name.1.is_empty() {
-                        " "
-                    } else {
-                        ""
-                    },
-                    &method.name,
-                    method
-                        .arguments
-                        .iter()
-                        .map(|(type_left, type_right)| format!("{type_left}{type_right}"))
-                        .collect::<Vec<String>>()
-                        .join(", "),
-                    method.return_type_name.1,
-                    if method.is_const { " const" } else { "" },
-                    if method.is_volatile { " volatile" } else { "" },
-                    if method.is_pure_virtual { " = 0" } else { "" },
-                )?;
+            // Static fields
+            for field in &self.static_fields {
+                Self::fmt_static_field(fmt_configuration, field, f)?;
             }
-        }
 
-        if !self.static_methods.is_empty() {
-            writeln!(f, "  ")?;
-            for method in &self.static_methods {
-                writeln!(
-                    f,
-                    "  {}{}static {}{}{}({}){}{}{};",
-                    match fmt_configuration.print_access_specifiers {
-                        AccessSpecifierReconstructionFlavor::Disabled => &FieldAccess::None,
-                        AccessSpecifierReconstructionFlavor::Always => &method.access,
-                        AccessSpecifierReconstructionFlavor::Automatic => {
-                            if method.access != FieldAccess::Public {
-                                &method.access
-                            } else {
-                                &FieldAccess::None
-                            }
-                        }
-                    },
-                    if method.is_virtual { "virtual " } else { "" },
-                    method.return_type_name.0,
-                    if method.return_type_name.1.is_empty() {
-                        " "
-                    } else {
-                        ""
-                    },
-                    &method.name,
-                    method
-                        .arguments
-                        .iter()
-                        .map(|(type_left, type_right)| format!("{type_left}{type_right}"))
-                        .collect::<Vec<String>>()
-                        .join(", "),
-                    method.return_type_name.1,
-                    if method.is_const { " const" } else { "" },
-                    if method.is_volatile { " volatile" } else { "" },
-                )?;
+            if !self.instance_methods.is_empty() {
+                writeln!(f, "  ")?;
+                for method in &self.instance_methods {
+                    Self::fmt_instance_method(fmt_configuration, method, f)?;
+                }
+            }
+
+            if !self.static_methods.is_empty() {
+                writeln!(f, "  ")?;
+                for method in &self.static_methods {
+                    Self::fmt_static_method(fmt_configuration, method, f)?;
+                }
             }
         }
 
@@ -487,5 +406,208 @@ impl ReconstructibleTypeData for Union<'_> {
         }
 
         Ok(())
+    }
+}
+
+impl<'p> Union<'p> {
+    fn push_method(&mut self, method: Method<'p>, is_static: bool) {
+        if is_static {
+            self.members
+                .push(MemberRef::StaticMethod(self.static_methods.len()));
+            self.static_methods.push(method);
+        } else {
+            self.members
+                .push(MemberRef::InstanceMethod(self.instance_methods.len()));
+            self.instance_methods.push(method);
+        }
+    }
+
+    /// Writes members in PDB declaration order. See
+    /// `Class::fmt_members_in_order`.
+    fn fmt_members_in_order(
+        &self,
+        fmt_configuration: &DataFormatConfiguration,
+        f: &mut impl std::fmt::Write,
+    ) -> fmt::Result {
+        let mut field_positions = vec![0; self.fields.len()];
+        for (position, member) in self.members.iter().enumerate() {
+            if let MemberRef::Field(field_index) = *member {
+                field_positions[field_index] = position;
+            }
+        }
+
+        let mut next_position = 0;
+        let mut last_was_method = false;
+        fmt_union_fields_interleaved(fmt_configuration, &self.fields, 1, f, |field_index, f| {
+            self.fmt_non_field_members(
+                fmt_configuration,
+                field_positions[field_index],
+                &mut next_position,
+                &mut last_was_method,
+                f,
+            )?;
+            if last_was_method {
+                writeln!(f, "  ")?;
+            }
+            last_was_method = false;
+            Ok(())
+        })?;
+        self.fmt_non_field_members(
+            fmt_configuration,
+            self.members.len(),
+            &mut next_position,
+            &mut last_was_method,
+            f,
+        )
+    }
+
+    /// Writes the static fields and methods found in
+    /// `self.members[*next_position..end_position]`, skipping instance fields
+    /// which are written by `fmt_union_fields_interleaved`.
+    fn fmt_non_field_members(
+        &self,
+        fmt_configuration: &DataFormatConfiguration,
+        end_position: usize,
+        next_position: &mut usize,
+        last_was_method: &mut bool,
+        f: &mut impl std::fmt::Write,
+    ) -> fmt::Result {
+        while *next_position < end_position {
+            let member = self.members[*next_position];
+            *next_position += 1;
+
+            let is_method = match member {
+                MemberRef::Field(_) => continue,
+                MemberRef::StaticField(_) => false,
+                MemberRef::InstanceMethod(_) | MemberRef::StaticMethod(_) => true,
+            };
+            if *last_was_method != is_method {
+                writeln!(f, "  ")?;
+            }
+            *last_was_method = is_method;
+
+            match member {
+                MemberRef::Field(_) => unreachable!("instance fields are skipped above"),
+                MemberRef::StaticField(index) => {
+                    Self::fmt_static_field(fmt_configuration, &self.static_fields[index], f)?
+                }
+                MemberRef::InstanceMethod(index) => {
+                    Self::fmt_instance_method(fmt_configuration, &self.instance_methods[index], f)?
+                }
+                MemberRef::StaticMethod(index) => {
+                    Self::fmt_static_method(fmt_configuration, &self.static_methods[index], f)?
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn fmt_static_field(
+        fmt_configuration: &DataFormatConfiguration,
+        field: &StaticField,
+        f: &mut impl std::fmt::Write,
+    ) -> fmt::Result {
+        writeln!(
+            f,
+            "  {}static {} {}{};",
+            match fmt_configuration.print_access_specifiers {
+                AccessSpecifierReconstructionFlavor::Disabled => &FieldAccess::None,
+                AccessSpecifierReconstructionFlavor::Always => &field.access,
+                AccessSpecifierReconstructionFlavor::Automatic => {
+                    if field.access != FieldAccess::Public {
+                        &field.access
+                    } else {
+                        &FieldAccess::None
+                    }
+                }
+            },
+            field.type_left,
+            &field.name,
+            field.type_right,
+        )
+    }
+
+    fn fmt_instance_method(
+        fmt_configuration: &DataFormatConfiguration,
+        method: &Method,
+        f: &mut impl std::fmt::Write,
+    ) -> fmt::Result {
+        writeln!(
+            f,
+            "  {}{}{}{}{}({}){}{}{}{};",
+            match fmt_configuration.print_access_specifiers {
+                AccessSpecifierReconstructionFlavor::Disabled => &FieldAccess::None,
+                AccessSpecifierReconstructionFlavor::Always => &method.access,
+                AccessSpecifierReconstructionFlavor::Automatic => {
+                    if method.access != FieldAccess::Public {
+                        &method.access
+                    } else {
+                        &FieldAccess::None
+                    }
+                }
+            },
+            if method.is_virtual { "virtual " } else { "" },
+            if method.is_ctor || method.is_dtor {
+                ""
+            } else {
+                &method.return_type_name.0
+            },
+            if !method.is_ctor && !method.is_dtor && method.return_type_name.1.is_empty() {
+                " "
+            } else {
+                ""
+            },
+            &method.name,
+            method
+                .arguments
+                .iter()
+                .map(|(type_left, type_right)| format!("{type_left}{type_right}"))
+                .collect::<Vec<String>>()
+                .join(", "),
+            method.return_type_name.1,
+            if method.is_const { " const" } else { "" },
+            if method.is_volatile { " volatile" } else { "" },
+            if method.is_pure_virtual { " = 0" } else { "" },
+        )
+    }
+
+    fn fmt_static_method(
+        fmt_configuration: &DataFormatConfiguration,
+        method: &Method,
+        f: &mut impl std::fmt::Write,
+    ) -> fmt::Result {
+        writeln!(
+            f,
+            "  {}{}static {}{}{}({}){}{}{};",
+            match fmt_configuration.print_access_specifiers {
+                AccessSpecifierReconstructionFlavor::Disabled => &FieldAccess::None,
+                AccessSpecifierReconstructionFlavor::Always => &method.access,
+                AccessSpecifierReconstructionFlavor::Automatic => {
+                    if method.access != FieldAccess::Public {
+                        &method.access
+                    } else {
+                        &FieldAccess::None
+                    }
+                }
+            },
+            if method.is_virtual { "virtual " } else { "" },
+            method.return_type_name.0,
+            if method.return_type_name.1.is_empty() {
+                " "
+            } else {
+                ""
+            },
+            &method.name,
+            method
+                .arguments
+                .iter()
+                .map(|(type_left, type_right)| format!("{type_left}{type_right}"))
+                .collect::<Vec<String>>()
+                .join(", "),
+            method.return_type_name.1,
+            if method.is_const { " const" } else { "" },
+            if method.is_volatile { " volatile" } else { "" },
+        )
     }
 }

@@ -307,6 +307,7 @@ impl ResymApp {
                                             self.settings.app_settings.print_brackets_new_line,
                                             self.settings.app_settings.ignore_std_types,
                                             self.settings.app_settings.ignore_compiler_generated_methods,
+                                            self.settings.app_settings.preserve_member_order,
                                         ),
                                     ) {
                                         log::error!("Failed to reconstruct type: {}", err);
@@ -328,6 +329,7 @@ impl ResymApp {
                                             self.settings.app_settings.print_brackets_new_line,
                                             self.settings.app_settings.ignore_std_types,
                                             self.settings.app_settings.ignore_compiler_generated_methods,
+                                            self.settings.app_settings.preserve_member_order,
                                         ))
                                     {
                                         log::error!("Failed to reconstruct type diff: {}", err);
@@ -554,6 +556,7 @@ impl ResymApp {
                                         self.settings.app_settings.print_brackets_new_line,
                                         self.settings.app_settings.ignore_std_types,
                                         self.settings.app_settings.ignore_compiler_generated_methods,
+                                        self.settings.app_settings.preserve_member_order,
                                     ))
                             {
                                 log::error!("Failed to reconstruct type: {}", err);

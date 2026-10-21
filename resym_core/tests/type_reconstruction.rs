@@ -178,6 +178,7 @@ fn test_type_reconstruction_internal(
                 print_brackets_new_line,
                 ignore_std_types,
                 false, // ignore_compiler_generated_methods
+                false, // preserve_member_order
             )
             .unwrap_or_else(|_| panic!("reconstruct type: {test_case_type_name}"));
 

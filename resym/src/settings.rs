@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 
 /// This struct represents the persistent settings of the application.
 #[derive(Serialize, Deserialize)]
+// Fields missing from older saved settings take their `Default` value
+#[serde(default)]
 pub struct ResymAppSettings {
     pub use_light_theme: bool,
     pub font_size: u16,
@@ -26,6 +28,8 @@ pub struct ResymAppSettings {
     pub ignore_std_types: bool,
     pub print_line_numbers: bool,
     pub ignore_compiler_generated_methods: bool,
+    // Print fields and methods in PDB declaration order
+    pub preserve_member_order: bool,
 }
 
 impl Default for ResymAppSettings {
@@ -47,6 +51,7 @@ impl Default for ResymAppSettings {
             ignore_std_types: true,
             print_line_numbers: false,
             ignore_compiler_generated_methods: true,
+            preserve_member_order: true,
         }
     }
 }

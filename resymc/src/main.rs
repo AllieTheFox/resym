@@ -53,6 +53,7 @@ fn main() -> Result<()> {
             print_brackets_new_line,
             ignore_std_types,
             ignore_compiler_generated_methods,
+            preserve_member_order,
             highlight_syntax,
         } => app.dump_types_command(
             pdb_path,
@@ -67,6 +68,7 @@ fn main() -> Result<()> {
             print_brackets_new_line,
             ignore_std_types,
             ignore_compiler_generated_methods,
+            preserve_member_order,
             highlight_syntax,
             output_file_path,
         ),
@@ -82,6 +84,7 @@ fn main() -> Result<()> {
             print_brackets_new_line,
             ignore_std_types,
             ignore_compiler_generated_methods,
+            preserve_member_order,
             highlight_syntax,
         } => app.dump_types_command(
             pdb_path,
@@ -96,6 +99,7 @@ fn main() -> Result<()> {
             print_brackets_new_line,
             ignore_std_types,
             ignore_compiler_generated_methods,
+            preserve_member_order,
             highlight_syntax,
             output_file_path,
         ),
@@ -114,6 +118,7 @@ fn main() -> Result<()> {
             print_brackets_new_line,
             ignore_std_types,
             ignore_compiler_generated_methods,
+            preserve_member_order,
             highlight_syntax,
         } => app.diff_type_command(
             from_pdb_path,
@@ -129,6 +134,7 @@ fn main() -> Result<()> {
             print_brackets_new_line,
             ignore_std_types,
             ignore_compiler_generated_methods,
+            preserve_member_order,
             highlight_syntax,
             output_file_path,
         ),

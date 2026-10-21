@@ -341,6 +341,7 @@ where
         print_brackets_new_line: bool,
         ignore_std_types: bool,
         ignore_compiler_generated_methods: bool,
+        preserve_member_order: bool,
     ) -> Result<ReconstructedType> {
         // Populate our `TypeFinder` and find the right type index
         let mut type_index = TypeIndex::default();
@@ -435,6 +436,7 @@ where
                 print_brackets_new_line,
                 ignore_std_types,
                 ignore_compiler_generated_methods,
+                preserve_member_order,
             )
         }
     }
@@ -451,6 +453,7 @@ where
         print_brackets_new_line: bool,
         ignore_std_types: bool,
         ignore_compiler_generated_methods: bool,
+        preserve_member_order: bool,
     ) -> Result<ReconstructedType> {
         // Populate our `TypeFinder`
         let mut type_finder = self.type_information.finder();
@@ -473,6 +476,7 @@ where
             print_brackets_new_line,
             ignore_std_types,
             ignore_compiler_generated_methods,
+            preserve_member_order,
         )
     }
 
@@ -854,6 +858,7 @@ where
         print_brackets_new_line: bool,
         ignore_std_types: bool,
         ignore_compiler_generated_methods: bool,
+        preserve_member_order: bool,
     ) -> Result<ReconstructedType> {
         let fmt_configuration = DataFormatConfiguration {
             print_access_specifiers,
@@ -862,6 +867,7 @@ where
             print_offset_info,
             print_brackets_new_line,
             ignore_compiler_generated_methods,
+            preserve_member_order,
         };
         let mut type_data = pdb_types::Data::new(ignore_std_types);
 
@@ -969,6 +975,7 @@ where
         print_brackets_new_line: bool,
         ignore_std_types: bool,
         ignore_compiler_generated_methods: bool,
+        preserve_member_order: bool,
     ) -> Result<String> {
         let mut type_data = pdb_types::Data::new(ignore_std_types);
         let mut processed_types = Vec::new();
@@ -1047,6 +1054,7 @@ where
                 print_offset_info,
                 print_brackets_new_line,
                 ignore_compiler_generated_methods,
+                preserve_member_order,
             },
             &type_depth_map,
             &mut reconstruction_output,

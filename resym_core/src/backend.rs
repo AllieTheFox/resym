@@ -67,6 +67,7 @@ pub enum BackendCommand {
         bool,                                // print_brackets_new_line
         bool,                                // ignore_std_types
         bool,                                // ignore_compiler_generated_methods
+        bool,                                // preserve_member_order
     ),
     /// Reconstruct a type given its name for a given PDB.
     ReconstructTypeByName(
@@ -82,6 +83,7 @@ pub enum BackendCommand {
         bool,                                // print_brackets_new_line
         bool,                                // ignore_std_types
         bool,                                // ignore_compiler_generated_methods
+        bool,                                // preserve_member_order
     ),
     /// Reconstruct all types found in a given PDB.
     ReconstructAllTypes(
@@ -95,6 +97,7 @@ pub enum BackendCommand {
         bool,                                // print_brackets_new_line
         bool,                                // ignore_std_types
         bool,                                // ignore_compiler_generated_methods
+        bool,                                // preserve_member_order
     ),
     /// Retrieve a list of types that match the given filter for a given PDB.
     ListTypes(PDBSlot, String, bool, bool, bool, TypeFilters),
@@ -156,6 +159,7 @@ pub enum BackendCommand {
         bool,                                // print_brackets_new_line
         bool,                                // ignore_std_types
         bool,                                // ignore_compiler_generated_methods
+        bool,                                // preserve_member_order
     ),
     /// Reconstruct the diff of a symbol given its name.
     DiffSymbolByName(
@@ -403,6 +407,7 @@ fn worker_thread_routine(
                 print_brackets_new_line,
                 ignore_std_types,
                 ignore_compiler_generated_methods,
+                preserve_member_order,
             ) => {
                 if let Some(pdb_file) = pdb_files.get(&pdb_slot) {
                     let reconstructed_type_result = reconstruct_type_by_index_command(
@@ -418,6 +423,7 @@ fn worker_thread_routine(
                         print_brackets_new_line,
                         ignore_std_types,
                         ignore_compiler_generated_methods,
+                        preserve_member_order,
                     );
                     frontend_controller.send_command(FrontendCommand::ReconstructTypeResult(
                         reconstructed_type_result,
@@ -438,6 +444,7 @@ fn worker_thread_routine(
                 print_brackets_new_line,
                 ignore_std_types,
                 ignore_compiler_generated_methods,
+                preserve_member_order,
             ) => {
                 if let Some(pdb_file) = pdb_files.get(&pdb_slot) {
                     let reconstructed_type_result = reconstruct_type_by_name_command(
@@ -453,6 +460,7 @@ fn worker_thread_routine(
                         print_brackets_new_line,
                         ignore_std_types,
                         ignore_compiler_generated_methods,
+                        preserve_member_order,
                     );
                     frontend_controller.send_command(FrontendCommand::ReconstructTypeResult(
                         reconstructed_type_result,
@@ -471,6 +479,7 @@ fn worker_thread_routine(
                 print_brackets_new_line,
                 ignore_std_types,
                 ignore_compiler_generated_methods,
+                preserve_member_order,
             ) => {
                 if let Some(pdb_file) = pdb_files.get(&pdb_slot) {
                     let reconstructed_type_result = reconstruct_all_types_command(
@@ -483,7 +492,8 @@ fn worker_thread_routine(
                         print_offset_info,
                         print_brackets_new_line,
                         ignore_std_types,
-                        ignore_compiler_generated_methods
+                        ignore_compiler_generated_methods,
+                        preserve_member_order,
                     );
                     frontend_controller.send_command(FrontendCommand::ReconstructTypeResult(
                         // Note: do not return any "xrefs from" when reconstructing all types
@@ -740,6 +750,7 @@ fn worker_thread_routine(
                 print_brackets_new_line,
                 ignore_std_types,
                 ignore_compiler_generated_methods,
+                preserve_member_order,
             ) => {
                 if let Some(pdb_file_from) = pdb_files.get(&pdb_from_slot) {
                     if let Some(pdb_file_to) = pdb_files.get(&pdb_to_slot) {
@@ -757,6 +768,7 @@ fn worker_thread_routine(
                             print_brackets_new_line,
                             ignore_std_types,
                             ignore_compiler_generated_methods,
+                            preserve_member_order,
                         );
                         frontend_controller
                             .send_command(FrontendCommand::DiffResult(type_diff_result))?;
@@ -814,6 +826,7 @@ fn reconstruct_type_by_index_command<'p, T>(
     print_brackets_new_line: bool,
     ignore_std_types: bool,
     ignore_compiler_generated_methods: bool,
+    preserve_member_order: bool,
 ) -> Result<ReconstructedType>
 where
     T: io::Seek + io::Read + std::fmt::Debug + 'p,
@@ -829,6 +842,7 @@ where
         print_brackets_new_line,
         ignore_std_types,
         ignore_compiler_generated_methods,
+        preserve_member_order,
     )?;
     if print_header {
         let file_header = generate_file_header(pdb_file, primitives_flavor, true, ignore_std_types);
@@ -851,6 +865,7 @@ fn reconstruct_type_by_name_command<'p, T>(
     print_brackets_new_line: bool,
     ignore_std_types: bool,
     ignore_compiler_generated_methods: bool,
+    preserve_member_order: bool,
 ) -> Result<ReconstructedType>
 where
     T: io::Seek + io::Read + std::fmt::Debug + 'p,
@@ -866,6 +881,7 @@ where
         print_brackets_new_line,
         ignore_std_types,
         ignore_compiler_generated_methods,
+        preserve_member_order,
     )?;
     if print_header {
         let file_header = generate_file_header(pdb_file, primitives_flavor, true, ignore_std_types);
@@ -886,6 +902,7 @@ fn reconstruct_all_types_command<'p, T>(
     print_brackets_new_line: bool,
     ignore_std_types: bool,
     ignore_compiler_generated_methods: bool,
+    preserve_member_order: bool,
 ) -> Result<String>
 where
     T: io::Seek + io::Read + std::fmt::Debug + 'p,
@@ -899,6 +916,7 @@ where
         print_brackets_new_line,
         ignore_std_types,
         ignore_compiler_generated_methods,
+        preserve_member_order,
     )?;
     if print_header {
         let file_header = generate_file_header(pdb_file, primitives_flavor, true, ignore_std_types);

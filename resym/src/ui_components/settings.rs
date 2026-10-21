@@ -117,6 +117,10 @@ impl SettingsComponent {
                             &mut self.app_settings.ignore_compiler_generated_methods,
                             "Ignore compiler generated methods",
                         );
+                        ui.checkbox(
+                            &mut self.app_settings.preserve_member_order,
+                            "Preserve PDB member order",
+                        );
                         ui.label(
                             egui::RichText::new("Print size comments")
                                 .color(ui.style().visuals.widgets.inactive.text_color()),

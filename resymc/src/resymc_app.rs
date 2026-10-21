@@ -105,6 +105,7 @@ impl ResymcApp {
         print_brackets_new_line: bool,
         ignore_std_types: bool,
         ignore_compiler_generated_methods: bool,
+        preserve_member_order: bool,
         highlight_syntax: bool,
         output_file_path: Option<PathBuf>,
     ) -> Result<()> {
@@ -136,6 +137,7 @@ impl ResymcApp {
                     print_brackets_new_line,
                     ignore_std_types,
                     ignore_compiler_generated_methods,
+                    preserve_member_order,
                 ))?;
         } else {
             self.backend
@@ -150,6 +152,7 @@ impl ResymcApp {
                     print_brackets_new_line,
                     ignore_std_types,
                     ignore_compiler_generated_methods,
+                    preserve_member_order,
                 ))?;
         }
         // Wait for the backend to finish filtering types
@@ -194,6 +197,7 @@ impl ResymcApp {
         print_brackets_new_line: bool,
         ignore_std_types: bool,
         ignore_compiler_generated_methods: bool,
+        preserve_member_order: bool,
         highlight_syntax: bool,
         output_file_path: Option<PathBuf>,
     ) -> Result<()> {
@@ -248,6 +252,7 @@ impl ResymcApp {
             print_brackets_new_line,
             ignore_std_types,
             ignore_compiler_generated_methods,
+            preserve_member_order,
         ))?;
         // Wait for the backend to finish
         if let FrontendCommand::DiffResult(reconstructed_type_diff_result) =
@@ -813,6 +818,7 @@ mod tests {
                 false, // print_brackets_new_line
                 false, // ignore_std_types
                 false, // ignore_compiler_generated_methods
+                false, // preserve_member_order
                 false, // highlight_syntax
                 None
             )
@@ -839,6 +845,7 @@ mod tests {
                 false, // print_brackets_new_line
                 true,  // ignore_std_types
                 true,  // ignore_compiler_generated_methods
+                true,  // preserve_member_order
                 true,  // highlight_syntax
                 None
             )
@@ -868,6 +875,7 @@ mod tests {
                 false, // print_brackets_new_line
                 false, // ignore_std_types
                 false, // ignore_compiler_generated_methods
+                false, // preserve_member_order
                 false, // highlight_syntax
                 Some(output_path.clone()),
             )
@@ -904,6 +912,7 @@ mod tests {
                 false, // print_brackets_new_line
                 false, // ignore_std_types
                 false, // ignore_compiler_generated_methods
+                false, // preserve_member_order
                 false, // highlight_syntax
                 None   // output_file_path
             )
@@ -931,6 +940,7 @@ mod tests {
                 false, // print_brackets_new_line
                 true,  // ignore_std_types
                 false, // ignore_compiler_generated_methods
+                true,  // preserve_member_order
                 true,  // highlight_syntax
                 None   // output_file_path
             )
@@ -963,6 +973,7 @@ mod tests {
                 false, // print_brackets_new_line
                 false, // ignore_std_types
                 false, // ignore_compiler_generated_methods
+                false, // preserve_member_order
                 false, // highlight_syntax
                 Some(output_path.clone()),
             )

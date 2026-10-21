@@ -657,6 +657,7 @@ impl<'p> Data<'p> {
                     base_classes: Vec::new(),
                     instance_methods: Vec::new(),
                     static_methods: Vec::new(),
+                    members: Vec::new(),
                     nested_classes: Vec::new(),
                     nested_unions: Vec::new(),
                     nested_enums: Vec::new(),
@@ -712,6 +713,7 @@ impl<'p> Data<'p> {
                     static_fields: Vec::new(),
                     instance_methods: Vec::new(),
                     static_methods: Vec::new(),
+                    members: Vec::new(),
                     nested_classes: Vec::new(),
                     nested_unions: Vec::new(),
                     nested_enums: Vec::new(),
@@ -843,11 +845,24 @@ pub fn resolve_complete_type_index(
     }
 }
 
-fn fmt_struct_fields_recursive(
+fn fmt_struct_fields_recursive<W: std::fmt::Write>(
     fmt_configuration: &DataFormatConfiguration,
     fields: &[Field],
     depth: usize,
-    f: &mut impl std::fmt::Write,
+    f: &mut W,
+) -> fmt::Result {
+    fmt_struct_fields_interleaved(fmt_configuration, fields, depth, f, |_, _| Ok(()))
+}
+
+/// Writes struct fields, calling `before_group` with the index of the first
+/// field of each top-level group (a field or an unnamed union) before writing
+/// that group. Used to interleave other members in PDB declaration order.
+fn fmt_struct_fields_interleaved<W: std::fmt::Write>(
+    fmt_configuration: &DataFormatConfiguration,
+    fields: &[Field],
+    depth: usize,
+    f: &mut W,
+    mut before_group: impl FnMut(usize, &mut W) -> fmt::Result,
 ) -> fmt::Result {
     if fields.is_empty() {
         return Ok(());
@@ -858,6 +873,7 @@ fn fmt_struct_fields_recursive(
     let indentation = "  ".repeat(depth);
     let mut last_field: Option<&Field> = None;
     for union_range in unions_found {
+        before_group(union_range.start, f)?;
         // Fields out of unnamed unions are represented by "empty" unions
         if union_range.is_empty() {
             let field = &fields[union_range.start];
@@ -1059,11 +1075,24 @@ fn find_unnamed_unions_in_struct(fields: &[Field]) -> Vec<Range<usize>> {
     unions_found
 }
 
-fn fmt_union_fields_recursive(
+fn fmt_union_fields_recursive<W: std::fmt::Write>(
     fmt_configuration: &DataFormatConfiguration,
     fields: &[Field],
     depth: usize,
-    f: &mut impl std::fmt::Write,
+    f: &mut W,
+) -> fmt::Result {
+    fmt_union_fields_interleaved(fmt_configuration, fields, depth, f, |_, _| Ok(()))
+}
+
+/// Union counterpart of `fmt_struct_fields_interleaved`: `before_group` is
+/// called with the index of the first field of each top-level group (a field
+/// or an unnamed struct).
+fn fmt_union_fields_interleaved<W: std::fmt::Write>(
+    fmt_configuration: &DataFormatConfiguration,
+    fields: &[Field],
+    depth: usize,
+    f: &mut W,
+    mut before_group: impl FnMut(usize, &mut W) -> fmt::Result,
 ) -> fmt::Result {
     if fields.is_empty() {
         return Ok(());
@@ -1072,6 +1101,7 @@ fn fmt_union_fields_recursive(
     let structs_found = find_unnamed_structs_in_unions(fields);
     let indentation = "  ".repeat(depth);
     for struct_range in structs_found {
+        before_group(struct_range.start, f)?;
         // Fields out of unnamed structs are represented by "empty" structs
         if struct_range.is_empty() {
             let field = &fields[struct_range.start];
@@ -1185,6 +1215,9 @@ pub struct DataFormatConfiguration {
     pub size_print_flavor: SizePrintFlavor,
     pub integers_as_hexadecimal: bool,
     pub ignore_compiler_generated_methods: bool,
+    /// Print fields and methods in their PDB declaration order instead of
+    /// grouping fields before methods.
+    pub preserve_member_order: bool,
     pub print_offset_info: bool,
     pub print_brackets_new_line: bool,
 }
@@ -1196,8 +1229,20 @@ impl Default for DataFormatConfiguration {
             size_print_flavor: SizePrintFlavor::Comment,
             integers_as_hexadecimal: true,
             ignore_compiler_generated_methods: true,
+            preserve_member_order: true,
             print_offset_info: true,
             print_brackets_new_line: false,
         }
     }
+}
+
+/// Reference to a class or union member, used to record the order in which
+/// members appear in the PDB field list. Each variant holds an index into the
+/// matching member vector.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MemberRef {
+    Field(usize),
+    StaticField(usize),
+    InstanceMethod(usize),
+    StaticMethod(usize),
 }
