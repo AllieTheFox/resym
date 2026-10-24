@@ -905,7 +905,7 @@ where
                 writeln!(&mut reconstruction_output, "{reconstructed_function}\n")?;
             }
         }
-        Ok(reconstruction_output)
+        Ok(with_identifier_pragma(reconstruction_output))
     }
 
     /// Reconstructs `types` (without their dependencies) in the given order.
@@ -1376,7 +1376,7 @@ where
             }
         }
 
-        Ok(reconstruction_output)
+        Ok(with_identifier_pragma(reconstruction_output))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1479,7 +1479,7 @@ where
             Ok(())
         })?;
 
-        Ok(result)
+        Ok(with_identifier_pragma(result))
     }
 
     /// Returns a `TypeFinder` able to find every type of the PDB
@@ -1538,7 +1538,7 @@ where
         print_method_rvas: bool,
     ) -> Result<String> {
         if !reconstruct_dependencies || needed_types.is_empty() {
-            return Ok(reconstructed_symbol);
+            return Ok(with_identifier_pragma(reconstructed_symbol));
         }
         let mut root_types: Vec<TypeIndex> = needed_types
             .iter()
@@ -1558,7 +1558,9 @@ where
             print_method_rvas,
             true,
         )?;
-        Ok(format!("{type_definitions}\n{reconstructed_symbol}"))
+        Ok(with_identifier_pragma(format!(
+            "{type_definitions}\n{reconstructed_symbol}"
+        )))
     }
 
     fn reconstruct_type_by_type_index_internal(
@@ -2365,11 +2367,16 @@ where
                 ) {
                     if type_name.0 == "..." {
                         // No type
-                        Some(format!("char {}; // (missing type information)", udt.name))
+                        Some(format!(
+                            "char {}; // (missing type information)",
+                            pdb_types::escape_name(&udt.name.to_string())
+                        ))
                     } else {
                         Some(format!(
                             "using {} = {}{};",
-                            udt.name, type_name.0, type_name.1
+                            pdb_types::escape_name(&udt.name.to_string()),
+                            type_name.0,
+                            type_name.1
                         ))
                     }
                 } else {
@@ -2434,7 +2441,7 @@ where
                         "{}{}void {}(); // {}CodeSize=0x{:x} (missing type information)",
                         source_location_line,
                         static_prefix,
-                        procedure.name,
+                        pdb_types::escape_name(&procedure.name.to_string()),
                         symbol_rva,
                         procedure.len,
                     ));
@@ -2500,7 +2507,10 @@ where
 
                 let signature = format!(
                     "{}{}{}{}",
-                    static_prefix, type_name.0, procedure.name, arg_string
+                    static_prefix,
+                    type_name.0,
+                    pdb_types::escape_name(&procedure.name.to_string()),
+                    arg_string
                 );
                 let comment = format!("{}CodeSize=0x{:x}", symbol_rva, procedure.len);
                 if local_variable_lines.is_empty() {
@@ -2537,12 +2547,18 @@ where
                         // No type
                         Some(format!(
                             "{}char {}; // {}(missing type information)",
-                            static_prefix, data.name, symbol_rva,
+                            static_prefix,
+                            pdb_types::escape_name(&data.name.to_string()),
+                            symbol_rva,
                         ))
                     } else {
                         Some(format!(
                             "{}{} {}{}; // {}",
-                            static_prefix, type_name.0, data.name, type_name.1, symbol_rva,
+                            static_prefix,
+                            type_name.0,
+                            pdb_types::escape_name(&data.name.to_string()),
+                            type_name.1,
+                            symbol_rva,
                         ))
                     }
                 } else {
@@ -2574,10 +2590,15 @@ where
                         // Add parenthese to distinguish functions from global variables
                         format!(
                             "void {}(); // {}(no type information)",
-                            data.name, symbol_rva,
+                            pdb_types::escape_name(&data.name.to_string()),
+                            symbol_rva,
                         )
                     } else {
-                        format!("char {}; // {}(no type information)", data.name, symbol_rva,)
+                        format!(
+                            "char {}; // {}(no type information)",
+                            pdb_types::escape_name(&data.name.to_string()),
+                            symbol_rva,
+                        )
                     },
                 )
             }
@@ -2589,10 +2610,16 @@ where
                 {
                     format!("{};", demangled_symbol)
                 } else if data.flags.data {
-                    format!("char {}; // Exported (no type information)", data.name)
+                    format!(
+                        "char {}; // Exported (no type information)",
+                        pdb_types::escape_name(&data.name.to_string())
+                    )
                 } else {
                     // Add parenthese to distinguish functions from exported variables
-                    format!("void {}(); // Exported (no type information)", data.name)
+                    format!(
+                        "void {}(); // Exported (no type information)",
+                        pdb_types::escape_name(&data.name.to_string())
+                    )
                 },
             ),
 
@@ -2993,6 +3020,16 @@ fn source_file_entry(
             types: Vec::new(),
             functions: Vec::new(),
         })
+}
+
+/// Prepends `IDENTIFIER_PRAGMA` to reconstructed symbols that have names
+/// written with `__identifier`, so that they compile
+fn with_identifier_pragma(reconstruction_output: String) -> String {
+    if reconstruction_output.contains("__identifier(\"") {
+        format!("{}\n{reconstruction_output}", pdb_types::IDENTIFIER_PRAGMA)
+    } else {
+        reconstruction_output
+    }
 }
 
 /// Returns the name of the class, union or enum with the given index

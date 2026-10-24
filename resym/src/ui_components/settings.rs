@@ -125,6 +125,15 @@ fn tab_ui(ui: &mut egui::Ui, tab: SettingsTab, settings: &mut ResymAppSettings) 
                 &mut settings.enable_syntax_hightlighting,
                 "Enable C++ syntax highlighting",
             );
+            // Only applies when highlighting
+            ui.indent("highlight_with_all_cores", |ui| {
+                ui.add_enabled_ui(settings.enable_syntax_hightlighting, |ui| {
+                    ui.checkbox(
+                        &mut settings.highlight_with_all_cores,
+                        "Highlight using all CPU cores",
+                    );
+                });
+            });
             ui.checkbox(&mut settings.print_line_numbers, "Print line numbers");
 
             ui.add_space(INTER_SECTION_SPACING);

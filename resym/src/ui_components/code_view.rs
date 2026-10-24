@@ -37,6 +37,7 @@ impl CodeViewComponent {
                 string,
                 app_settings.enable_syntax_hightlighting,
                 line_desc,
+                app_settings.highlight_with_all_cores,
             );
             ui.fonts(|fonts| fonts.layout_job(layout_job))
         };

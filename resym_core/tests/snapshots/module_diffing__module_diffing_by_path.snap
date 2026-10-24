@@ -14,6 +14,7 @@ expression: module_diff.data
  // Information extracted with resym v0.4.1
  //
  
+ #pragma warning(disable: 4483) // __identifier names
  using namespace std;
  static int32_t (* pre_c_initializer)(); // RVA=0x19440 
  static int32_t (* post_pgo_initializer)(); // RVA=0x19550 
@@ -22,7 +23,7 @@ expression: module_diff.data
  using TP_CALLBACK_ENVIRON_V3 = _TP_CALLBACK_ENVIRON_V3;
  static int32_t __scrt_common_main(); // RVA=0x11e80 CodeSize=0x13
  static int32_t __scrt_common_main_seh(); // RVA=0x11ea0 CodeSize=0x19e
- static void `__scrt_common_main_seh'::`1'::filt$0(); // RVA=0x17bd0 CodeSize=0x30 (missing type information)
+ static void __identifier("`__scrt_common_main_seh'")::__identifier("`1'")::filt$0(); // RVA=0x17bd0 CodeSize=0x30 (missing type information)
  int32_t __scrt_narrow_argv_policy::configure_argv(); // RVA=0x120b0 CodeSize=0x15
  int32_t __scrt_narrow_environment_policy::initialize_environment(); // RVA=0x120d0 CodeSize=0xe
  static int32_t invoke_main(); // RVA=0x120f0 CodeSize=0x3e

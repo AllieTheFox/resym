@@ -15,6 +15,8 @@ pub struct ResymAppSettings {
     pub search_case_insensitive: bool,
     pub search_use_regex: bool,
     pub enable_syntax_hightlighting: bool,
+    // Highlight with as many threads as the CPU has logical cores
+    pub highlight_with_all_cores: bool,
     pub integers_as_hexadecimal: bool,
     pub print_offset_info: bool,
     pub print_brackets_new_line: bool,
@@ -81,6 +83,7 @@ impl Default for ResymAppSettings {
             search_case_insensitive: true,
             search_use_regex: false,
             enable_syntax_hightlighting: true,
+            highlight_with_all_cores: true,
             integers_as_hexadecimal: true,
             print_offset_info: true,
             print_brackets_new_line: false,
@@ -127,6 +130,7 @@ impl ResymAppSettings {
             search_case_insensitive: false,
             search_use_regex: false,
             enable_syntax_hightlighting: false,
+            highlight_with_all_cores: false,
             print_line_numbers: false,
             ..settings.clone()
         };

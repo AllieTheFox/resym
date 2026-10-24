@@ -31,6 +31,8 @@
 - The displayed type, symbol or module is reconstructed again when a setting that affects its output changes
 - The settings window is split into "General", "Types", "Functions" and "Output" tabs, keeps the same size on every tab, and shows drop-down settings next to their label
 - Looking up a symbol by name (`dump-symbol`, `diff-symbol` and symbol diffs in `resym`) prefers a function or variable to the public symbol with the same name
+- Syntax highlighting runs in the background in `resym`: the code is shown right away and colored once highlighted, instead of freezing the window (large views took over a minute). It can use all the CPU's cores ("Highlight using all CPU cores", on by default), and each top-level definition is highlighted on its own, so a definition the highlighter misreads no longer miscolors the rest of the view
+- Symbol names that aren't valid C++ names (e.g., `` `eh vector destructor iterator' ``, or names that couldn't be demangled) are written as `__identifier("...")`, preceded by `#pragma warning(disable: 4483)` so that MSVC accepts them. Their quotes no longer break syntax highlighting
 
 ## [0.4.0] - 2024-03-24
 

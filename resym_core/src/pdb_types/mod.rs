@@ -7,6 +7,7 @@ mod nested;
 mod primitive_types;
 mod union;
 
+use std::borrow::Cow;
 use std::cell::Cell;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
@@ -1434,6 +1435,103 @@ impl<W: std::fmt::Write> std::fmt::Write for IndentingWriter<'_, W> {
 /// with MSVC 14.51 PDBs)
 const ANONYMOUS_NAMESPACE: &str = "`anonymous-namespace'";
 
+/// Disables the warning MSVC reports as an error for `__identifier` names
+/// that aren't keywords (C4483), so that `escape_name` names compile
+pub const IDENTIFIER_PRAGMA: &str = "#pragma warning(disable: 4483) // __identifier names";
+
+/// Returns `name` with the components of the qualified name that aren't
+/// valid C++ names (e.g., `` `eh vector destructor iterator' `` or
+/// `<lambda_1>`) written as `__identifier("...")`, which MSVC accepts with
+/// `IDENTIFIER_PRAGMA`.
+pub fn escape_name(name: &str) -> Cow<'_, str> {
+    let components = name_components(name);
+    if components
+        .iter()
+        .all(|component| is_valid_name_component(component))
+    {
+        return Cow::Borrowed(name);
+    }
+    Cow::Owned(
+        components
+            .iter()
+            .map(|component| {
+                if is_valid_name_component(component) {
+                    (*component).to_owned()
+                } else {
+                    let escaped = component.replace('\\', "\\\\").replace('"', "\\\"");
+                    format!("__identifier(\"{escaped}\")")
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("::"),
+    )
+}
+
+/// Splits a qualified name at the `::` that aren't part of template
+/// arguments, parameter lists or MSVC's `` `quoted' `` names.
+fn name_components(name: &str) -> Vec<&str> {
+    let bytes = name.as_bytes();
+    let mut components = Vec::new();
+    let mut component_start = 0;
+    let (mut angle_depth, mut paren_depth, mut quote_depth) = (0usize, 0usize, 0usize);
+    let mut i = 0;
+    while i < bytes.len() {
+        // Operator names (`operator<`) can hold unbalanced brackets
+        let in_operator_name = is_operator_name(&bytes[component_start..i]);
+        match bytes[i] {
+            b'`' => quote_depth += 1,
+            b'\'' if quote_depth > 0 => quote_depth -= 1,
+            b'<' if quote_depth == 0 && !in_operator_name => angle_depth += 1,
+            b'>' if quote_depth == 0 && !in_operator_name && angle_depth > 0 => angle_depth -= 1,
+            b'(' if quote_depth == 0 => paren_depth += 1,
+            b')' if quote_depth == 0 && paren_depth > 0 => paren_depth -= 1,
+            b':' if quote_depth == 0
+                && angle_depth == 0
+                && paren_depth == 0
+                && bytes.get(i + 1) == Some(&b':') =>
+            {
+                components.push(&name[component_start..i]);
+                i += 2;
+                component_start = i;
+                continue;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    components.push(&name[component_start..]);
+    components
+}
+
+fn is_operator_name(component: &[u8]) -> bool {
+    component
+        .strip_prefix(b"operator")
+        .is_some_and(|rest| !rest.first().is_some_and(|b| is_identifier_byte(*b)))
+}
+
+/// Bytes MSVC accepts in identifiers (`$` and UTF-8 included)
+fn is_identifier_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'$' || byte >= 0x80
+}
+
+/// Whether `component` is an identifier (or a destructor name) with optional
+/// template arguments, or an operator name.
+fn is_valid_name_component(component: &str) -> bool {
+    if is_operator_name(component.as_bytes()) {
+        return true;
+    }
+    let name = component.strip_prefix('~').unwrap_or(component);
+    let identifier_length = name.bytes().take_while(|b| is_identifier_byte(*b)).count();
+    if identifier_length == 0 || name.as_bytes()[0].is_ascii_digit() {
+        return false;
+    }
+    let template_arguments = &name[identifier_length..];
+    template_arguments.is_empty()
+        || (template_arguments.starts_with('<')
+            && template_arguments.ends_with('>')
+            && !template_arguments.contains(['`', '\'']))
+}
+
 /// Splits a qualified name at its last `::` that isn't part of template
 /// arguments, returning the qualifier and the unqualified name.
 pub(crate) fn split_qualified_name(name: &str) -> Option<(&str, &str)> {
@@ -2048,6 +2146,47 @@ impl MemberRef {
             MemberRef::NestedType(_) => MemberKind::NestedType,
             MemberRef::Field(_) | MemberRef::StaticField(_) => MemberKind::Data,
             MemberRef::InstanceMethod(_) | MemberRef::StaticMethod(_) => MemberKind::Method,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::escape_name;
+
+    #[test]
+    fn escape_name_wraps_invalid_components_only() {
+        assert_eq!(
+            escape_name("`eh vector destructor iterator'"),
+            "__identifier(\"`eh vector destructor iterator'\")"
+        );
+        assert_eq!(
+            escape_name("`__ArrayUnwind'::`1'::filt$0"),
+            "__identifier(\"`__ArrayUnwind'\")::__identifier(\"`1'\")::filt$0"
+        );
+        // `::` inside quoted names and template arguments don't split
+        assert_eq!(
+            escape_name("`Foo::Bar'::x"),
+            "__identifier(\"`Foo::Bar'\")::x"
+        );
+        assert_eq!(
+            escape_name("Foo<`anonymous namespace'::Bar>::f"),
+            "__identifier(\"Foo<`anonymous namespace'::Bar>\")::f"
+        );
+        assert_eq!(
+            escape_name("<lambda_1>::operator()"),
+            "__identifier(\"<lambda_1>\")::operator()"
+        );
+        assert_eq!(escape_name("a\"b"), "__identifier(\"a\\\"b\")");
+        // Valid names are unchanged
+        for name in [
+            "std::vector<int,std::allocator<int> >::operator<",
+            "Foo::~Foo",
+            "Foo<1>::operator<<",
+            "Foo::operator bool",
+            "filt$0",
+        ] {
+            assert_eq!(escape_name(name), name);
         }
     }
 }
