@@ -6,6 +6,7 @@ use pdb::{AddressMap, FallibleIterator};
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 
 use std::{
+    cell::RefCell,
     collections::{BTreeMap, BinaryHeap, HashMap, HashSet, VecDeque},
     fmt::Write,
     io::{self, Read, Seek},
@@ -18,6 +19,9 @@ use std::{fs::File, path::Path, time::Instant};
 use crate::{
     error::{Result, ResymCoreError},
     frontend::ReconstructedType,
+    local_variables::{
+        local_variable_lines, procedure_local_variables, LocalVariableFormat, NameContext,
+    },
     par_iter_if_available,
     parameter_names::{procedure_parameter_names, ParameterLayout},
     pdb_types::{
@@ -127,6 +131,9 @@ where
     pub symbol_list: SymbolListEx,
     pub machine_type: pdb::MachineType,
     pub type_information: pdb::TypeInformation<'p>,
+    /// IDs of functions, used to name inlined functions. Missing from PDBs
+    /// older than VC++ 2015.
+    id_information: Option<pdb::IdInformation<'p>>,
     pub debug_information: pdb::DebugInformation<'p>,
     pub global_symbols: pdb::SymbolTable<'p>,
     pub sections: Vec<pdb::ImageSectionHeader>,
@@ -146,6 +153,7 @@ impl<'p> PdbFile<'p, File> {
         let file = PDBDataSource::File(File::open(pdb_file_path)?);
         let mut pdb = pdb::PDB::open(file)?;
         let type_information = pdb.type_information()?;
+        let id_information = pdb.id_information().ok();
         let debug_information = pdb.debug_information()?;
         let global_symbols = pdb.global_symbols()?;
         let sections = pdb.sections().unwrap_or_default().unwrap_or_default();
@@ -158,6 +166,7 @@ impl<'p> PdbFile<'p, File> {
             symbol_list: Default::default(),
             machine_type,
             type_information,
+            id_information,
             debug_information,
             global_symbols,
             sections,
@@ -182,6 +191,7 @@ impl<'p> PdbFile<'p, PDBDataSource> {
         let reader = PDBDataSource::Vec(io::Cursor::new(pdb_file_data));
         let mut pdb = pdb::PDB::open(reader)?;
         let type_information = pdb.type_information()?;
+        let id_information = pdb.id_information().ok();
         let debug_information = pdb.debug_information()?;
         let global_symbols = pdb.global_symbols()?;
         let sections = pdb.sections().unwrap_or_default().unwrap_or_default();
@@ -194,6 +204,7 @@ impl<'p> PdbFile<'p, PDBDataSource> {
             symbol_list: Default::default(),
             machine_type,
             type_information,
+            id_information,
             debug_information,
             global_symbols,
             sections,
@@ -216,6 +227,7 @@ impl<'p> PdbFile<'p, PDBDataSource> {
         let reader = PDBDataSource::SharedArray(io::Cursor::new(pdb_file_data));
         let mut pdb = pdb::PDB::open(reader)?;
         let type_information = pdb.type_information()?;
+        let id_information = pdb.id_information().ok();
         let debug_information = pdb.debug_information()?;
         let global_symbols = pdb.global_symbols()?;
         let sections = pdb.sections().unwrap_or_default().unwrap_or_default();
@@ -228,6 +240,7 @@ impl<'p> PdbFile<'p, PDBDataSource> {
             symbol_list: Default::default(),
             machine_type,
             type_information,
+            id_information,
             debug_information,
             global_symbols,
             sections,
@@ -616,126 +629,235 @@ where
         Ok(module_list.collect()?)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn reconstruct_symbol_by_index(
         &self,
         symbol_index: SymbolIndex,
         primitives_flavor: PrimitiveReconstructionFlavor,
         print_access_specifiers: AccessSpecifierReconstructionFlavor,
+        print_local_variables: bool,
+        print_local_variable_locations: bool,
+        print_inlined_call_sites: bool,
+        reconstruct_dependencies: bool,
+        size_print_flavor: SizePrintFlavor,
+        integers_as_hexadecimal: bool,
+        print_offset_info: bool,
+        print_brackets_new_line: bool,
+        ignore_std_types: bool,
+        ignore_compiler_generated_methods: bool,
+        preserve_member_order: bool,
+        reconstruct_namespaces: bool,
+        print_override_specifiers: bool,
+        print_argument_names: bool,
+        print_method_rvas: bool,
+        print_calling_conventions: bool,
+        vftable_comment_flavor: VftableCommentFlavor,
+        hide_base_class_offsets: bool,
+        omit_virtual_on_overrides: bool,
+        print_elaborated_type_specifiers: bool,
+        indentation: IndentationFlavor,
+        compact_output: bool,
     ) -> Result<String> {
-        // Populate our `TypeFinder`
-        let mut type_finder = self.type_information.finder();
-        {
-            let mut type_iter = self.type_information.iter();
-            while (type_iter.next()?).is_some() {
-                type_finder.update(&type_iter);
-            }
-        }
+        let type_finder = self.type_finder()?;
+        let id_finder = self.id_finder_if(print_local_variables && print_inlined_call_sites)?;
+        let local_variable_format = self.local_variable_format(
+            print_local_variables,
+            print_local_variable_locations,
+            print_inlined_call_sites,
+            indentation,
+        );
+        let mut needed_types = pdb_types::NeededTypeSet::new();
 
         // Check which module the symbol is from
+        let mut reconstructed_symbol = None;
         if symbol_index.0 == GLOBAL_MODULE_INDEX {
             // Global symbols
             let mut symbol_table = self.global_symbols.iter();
             while let Some(symbol) = symbol_table.next()? {
                 if symbol.index().0 == symbol_index.1 {
-                    return Ok(self
-                        .reconstruct_symbol(
+                    reconstructed_symbol = Some(self.reconstruct_symbol(
+                        &type_finder,
+                        id_finder.as_ref(),
+                        &CrossModuleResolver::new(self, None),
+                        None,
+                        symbol_index,
+                        &symbol,
+                        primitives_flavor,
+                        print_access_specifiers,
+                        local_variable_format.as_ref(),
+                        &mut needed_types,
+                    ));
+                    break;
+                }
+            }
+        } else if let Some(module) = self.debug_information.modules()?.nth(symbol_index.0)? {
+            // Modules' private symbols. The lock is released before
+            // reconstructing, which can load other modules.
+            let module_info = self
+                .pdb
+                .write()
+                .expect("lock shouldn't be poisoned")
+                .module_info(&module)?;
+            if let Some(module_info) = module_info {
+                let cross_module_resolver = CrossModuleResolver::new(self, Some(&module_info));
+                let mut module_symbols = module_info.symbols_at(symbol_index.1.into())?;
+                while let Some(symbol) = module_symbols.next()? {
+                    if symbol.index().0 == symbol_index.1 {
+                        reconstructed_symbol = Some(self.reconstruct_symbol(
                             &type_finder,
-                            None,
+                            id_finder.as_ref(),
+                            &cross_module_resolver,
+                            Some(&module_info),
                             symbol_index,
                             &symbol,
                             primitives_flavor,
                             print_access_specifiers,
-                        )
-                        .unwrap_or_default());
-                }
-            }
-        } else if let Some(module) = self.debug_information.modules()?.nth(symbol_index.0)? {
-            // Modules' private symbols
-            let mut pdb = self.pdb.write().expect("lock shouldn't be poisoned");
-            if let Some(module_info) = pdb.module_info(&module)? {
-                let mut module_symbols = module_info.symbols_at(symbol_index.1.into())?;
-                while let Some(symbol) = module_symbols.next()? {
-                    if symbol.index().0 == symbol_index.1 {
-                        return Ok(self
-                            .reconstruct_symbol(
-                                &type_finder,
-                                Some(&module_info),
-                                symbol_index,
-                                &symbol,
-                                primitives_flavor,
-                                print_access_specifiers,
-                            )
-                            .unwrap_or_default());
+                            local_variable_format.as_ref(),
+                            &mut needed_types,
+                        ));
+                        break;
                     }
                 }
             }
         }
 
-        Err(ResymCoreError::SymbolNotFoundError(format!(
-            "Symbol #{:?} not found",
-            symbol_index
-        )))
+        let Some(reconstructed_symbol) = reconstructed_symbol else {
+            return Err(ResymCoreError::SymbolNotFoundError(format!(
+                "Symbol #{:?} not found",
+                symbol_index
+            )));
+        };
+        self.prepend_type_definitions(
+            &type_finder,
+            reconstructed_symbol.unwrap_or_default(),
+            &needed_types,
+            reconstruct_dependencies,
+            &DataFormatConfiguration {
+                print_access_specifiers,
+                size_print_flavor,
+                integers_as_hexadecimal,
+                print_offset_info,
+                print_brackets_new_line,
+                ignore_compiler_generated_methods,
+                preserve_member_order,
+                reconstruct_namespaces,
+                print_override_specifiers,
+                omit_virtual_on_overrides,
+                print_method_rvas,
+                print_calling_conventions,
+                vftable_comment_flavor,
+                hide_base_class_offsets,
+                indentation,
+                compact_output,
+            },
+            &TypeNameFlavor {
+                primitives: primitives_flavor,
+                elaborated_type_specifiers: print_elaborated_type_specifiers,
+            },
+            ignore_std_types,
+            print_argument_names,
+            print_method_rvas,
+        )
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn reconstruct_symbol_by_name(
         &self,
         symbol_name: &str,
         primitives_flavor: PrimitiveReconstructionFlavor,
         print_access_specifiers: AccessSpecifierReconstructionFlavor,
+        print_local_variables: bool,
+        print_local_variable_locations: bool,
+        print_inlined_call_sites: bool,
+        reconstruct_dependencies: bool,
+        size_print_flavor: SizePrintFlavor,
+        integers_as_hexadecimal: bool,
+        print_offset_info: bool,
+        print_brackets_new_line: bool,
+        ignore_std_types: bool,
+        ignore_compiler_generated_methods: bool,
+        preserve_member_order: bool,
+        reconstruct_namespaces: bool,
+        print_override_specifiers: bool,
+        print_argument_names: bool,
+        print_method_rvas: bool,
+        print_calling_conventions: bool,
+        vftable_comment_flavor: VftableCommentFlavor,
+        hide_base_class_offsets: bool,
+        omit_virtual_on_overrides: bool,
+        print_elaborated_type_specifiers: bool,
+        indentation: IndentationFlavor,
+        compact_output: bool,
     ) -> Result<String> {
-        // Populate our `TypeFinder`
-        let mut type_finder = self.type_information.finder();
-        {
-            let mut type_iter = self.type_information.iter();
-            while (type_iter.next()?).is_some() {
-                type_finder.update(&type_iter);
-            }
-        }
+        let type_finder = self.type_finder()?;
+        let id_finder = self.id_finder_if(print_local_variables && print_inlined_call_sites)?;
+        let local_variable_format = self.local_variable_format(
+            print_local_variables,
+            print_local_variable_locations,
+            print_inlined_call_sites,
+            indentation,
+        );
+        let mut needed_types = pdb_types::NeededTypeSet::new();
 
+        let mut reconstructed_symbol = None;
+        // Public symbols only have a name, so the procedure or variable they
+        // refer to is preferred when found in the modules
+        let mut public_symbol_index = None;
         // Global symbols
         let mut symbol_table = self.global_symbols.iter();
         while let Some(symbol) = symbol_table.next()? {
             if let Ok(symbol_data) = symbol.parse() {
-                if let Some(current_symbol_name) = get_symbol_name(&symbol_data) {
-                    if current_symbol_name == symbol_name {
-                        return Ok(self
-                            .reconstruct_symbol(
-                                &type_finder,
-                                None,
-                                (GLOBAL_MODULE_INDEX, symbol.index().0),
-                                &symbol,
-                                primitives_flavor,
-                                print_access_specifiers,
-                            )
-                            .unwrap_or_default());
+                if get_symbol_name(&symbol_data).as_deref() == Some(symbol_name) {
+                    if let pdb::SymbolData::Public(_) = symbol_data {
+                        public_symbol_index.get_or_insert(symbol.index());
+                        continue;
                     }
+                    reconstructed_symbol = Some(self.reconstruct_symbol(
+                        &type_finder,
+                        id_finder.as_ref(),
+                        &CrossModuleResolver::new(self, None),
+                        None,
+                        (GLOBAL_MODULE_INDEX, symbol.index().0),
+                        &symbol,
+                        primitives_flavor,
+                        print_access_specifiers,
+                        local_variable_format.as_ref(),
+                        &mut needed_types,
+                    ));
+                    break;
                 }
             }
         }
 
-        // Modules' private symbols
-        {
-            let mut pdb = self.pdb.write().expect("lock shouldn't be poisoned");
+        // Modules' private symbols. The lock is released before
+        // reconstructing, which can load other modules.
+        if reconstructed_symbol.is_none() {
             let mut modules = self.debug_information.modules()?;
             let mut module_id = 0;
-            while let Some(module) = modules.next()? {
-                if let Some(module_info) = pdb.module_info(&module)? {
+            'modules: while let Some(module) = modules.next()? {
+                let module_info = self
+                    .pdb
+                    .write()
+                    .expect("lock shouldn't be poisoned")
+                    .module_info(&module)?;
+                if let Some(module_info) = module_info {
                     let mut module_symbols = module_info.symbols()?;
                     while let Some(symbol) = module_symbols.next()? {
                         if let Ok(symbol_data) = symbol.parse() {
-                            if let Some(current_symbol_name) = get_symbol_name(&symbol_data) {
-                                if current_symbol_name == symbol_name {
-                                    return Ok(self
-                                        .reconstruct_symbol(
-                                            &type_finder,
-                                            Some(&module_info),
-                                            (module_id, symbol.index().0),
-                                            &symbol,
-                                            primitives_flavor,
-                                            print_access_specifiers,
-                                        )
-                                        .unwrap_or_default());
-                                }
+                            if get_symbol_name(&symbol_data).as_deref() == Some(symbol_name) {
+                                reconstructed_symbol = Some(self.reconstruct_symbol(
+                                    &type_finder,
+                                    id_finder.as_ref(),
+                                    &CrossModuleResolver::new(self, Some(&module_info)),
+                                    Some(&module_info),
+                                    (module_id, symbol.index().0),
+                                    &symbol,
+                                    primitives_flavor,
+                                    print_access_specifiers,
+                                    local_variable_format.as_ref(),
+                                    &mut needed_types,
+                                ));
+                                break 'modules;
                             }
                         }
                     }
@@ -744,40 +866,102 @@ where
             }
         }
 
-        Err(ResymCoreError::SymbolNotFoundError(format!(
-            "Symbol '{}' not found",
-            symbol_name
-        )))
+        // Fall back to the public symbol
+        if let (None, Some(public_symbol_index)) = (&reconstructed_symbol, public_symbol_index) {
+            if let Some(symbol) = self.global_symbols.iter_at(public_symbol_index).next()? {
+                reconstructed_symbol = Some(self.reconstruct_symbol(
+                    &type_finder,
+                    id_finder.as_ref(),
+                    &CrossModuleResolver::new(self, None),
+                    None,
+                    (GLOBAL_MODULE_INDEX, symbol.index().0),
+                    &symbol,
+                    primitives_flavor,
+                    print_access_specifiers,
+                    local_variable_format.as_ref(),
+                    &mut needed_types,
+                ));
+            }
+        }
+
+        let Some(reconstructed_symbol) = reconstructed_symbol else {
+            return Err(ResymCoreError::SymbolNotFoundError(format!(
+                "Symbol '{}' not found",
+                symbol_name
+            )));
+        };
+        self.prepend_type_definitions(
+            &type_finder,
+            reconstructed_symbol.unwrap_or_default(),
+            &needed_types,
+            reconstruct_dependencies,
+            &DataFormatConfiguration {
+                print_access_specifiers,
+                size_print_flavor,
+                integers_as_hexadecimal,
+                print_offset_info,
+                print_brackets_new_line,
+                ignore_compiler_generated_methods,
+                preserve_member_order,
+                reconstruct_namespaces,
+                print_override_specifiers,
+                omit_virtual_on_overrides,
+                print_method_rvas,
+                print_calling_conventions,
+                vftable_comment_flavor,
+                hide_base_class_offsets,
+                indentation,
+                compact_output,
+            },
+            &TypeNameFlavor {
+                primitives: primitives_flavor,
+                elaborated_type_specifiers: print_elaborated_type_specifiers,
+            },
+            ignore_std_types,
+            print_argument_names,
+            print_method_rvas,
+        )
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn reconstruct_all_symbols(
         &self,
         primitives_flavor: PrimitiveReconstructionFlavor,
         print_access_specifiers: AccessSpecifierReconstructionFlavor,
+        print_local_variables: bool,
+        print_local_variable_locations: bool,
+        print_inlined_call_sites: bool,
+        indentation: IndentationFlavor,
     ) -> Result<String> {
-        // Populate our `TypeFinder`
-        let mut type_finder = self.type_information.finder();
-        {
-            let mut type_iter = self.type_information.iter();
-            while (type_iter.next()?).is_some() {
-                type_finder.update(&type_iter);
-            }
-        }
+        let type_finder = self.type_finder()?;
+        let id_finder = self.id_finder_if(print_local_variables && print_inlined_call_sites)?;
+        let local_variable_format = self.local_variable_format(
+            print_local_variables,
+            print_local_variable_locations,
+            print_inlined_call_sites,
+            indentation,
+        );
+        let mut needed_types = pdb_types::NeededTypeSet::new();
 
         let mut reconstruction_output = String::new();
 
         // Global symbols
+        let global_cross_module_resolver = CrossModuleResolver::new(self, None);
         let mut symbol_table = self.global_symbols.iter();
         while let Some(symbol) = symbol_table.next()? {
             if let Ok(symbol_data) = symbol.parse() {
                 if get_symbol_name(&symbol_data).is_some() {
                     if let Some(reconstructed_symbol) = self.reconstruct_symbol(
                         &type_finder,
+                        id_finder.as_ref(),
+                        &global_cross_module_resolver,
                         None,
                         (GLOBAL_MODULE_INDEX, symbol.index().0),
                         &symbol,
                         primitives_flavor,
                         print_access_specifiers,
+                        local_variable_format.as_ref(),
+                        &mut needed_types,
                     ) {
                         writeln!(&mut reconstruction_output, "{}", reconstructed_symbol)?;
                     }
@@ -785,24 +969,34 @@ where
             }
         }
 
-        // Modules' private symbols
+        // Modules' private symbols. The lock is released before
+        // reconstructing, which can load other modules.
         {
-            let mut pdb = self.pdb.write().expect("lock shouldn't be poisoned");
             let mut modules = self.debug_information.modules()?;
             let mut module_id = 0;
             while let Some(module) = modules.next()? {
-                if let Some(module_info) = pdb.module_info(&module)? {
+                let module_info = self
+                    .pdb
+                    .write()
+                    .expect("lock shouldn't be poisoned")
+                    .module_info(&module)?;
+                if let Some(module_info) = module_info {
+                    let cross_module_resolver = CrossModuleResolver::new(self, Some(&module_info));
                     let mut module_symbols = module_info.symbols()?;
                     while let Some(symbol) = module_symbols.next()? {
                         if let Ok(symbol_data) = symbol.parse() {
                             if get_symbol_name(&symbol_data).is_some() {
                                 if let Some(reconstructed_symbol) = self.reconstruct_symbol(
                                     &type_finder,
+                                    id_finder.as_ref(),
+                                    &cross_module_resolver,
                                     Some(&module_info),
                                     (module_id, symbol.index().0),
                                     &symbol,
                                     primitives_flavor,
                                     print_access_specifiers,
+                                    local_variable_format.as_ref(),
+                                    &mut needed_types,
                                 ) {
                                     writeln!(
                                         &mut reconstruction_output,
@@ -821,11 +1015,16 @@ where
         Ok(reconstruction_output)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn reconstruct_module_by_path(
         &self,
         module_path: &str,
         primitives_flavor: PrimitiveReconstructionFlavor,
         print_access_specifiers: AccessSpecifierReconstructionFlavor,
+        print_local_variables: bool,
+        print_local_variable_locations: bool,
+        print_inlined_call_sites: bool,
+        indentation: IndentationFlavor,
     ) -> Result<String> {
         // Find index for module
         let mut modules = self.debug_information.modules()?;
@@ -840,15 +1039,24 @@ where
                 module_index,
                 primitives_flavor,
                 print_access_specifiers,
+                print_local_variables,
+                print_local_variable_locations,
+                print_inlined_call_sites,
+                indentation,
             ),
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn reconstruct_module_by_index(
         &self,
         module_index: usize,
         primitives_flavor: PrimitiveReconstructionFlavor,
         print_access_specifiers: AccessSpecifierReconstructionFlavor,
+        print_local_variables: bool,
+        print_local_variable_locations: bool,
+        print_inlined_call_sites: bool,
+        indentation: IndentationFlavor,
     ) -> Result<String> {
         let mut modules = self.debug_information.modules()?;
         let module = modules.nth(module_index)?.ok_or_else(|| {
@@ -867,24 +1075,30 @@ where
                 ))
             })?;
 
-        // Populate our `TypeFinder`
-        let mut type_finder = self.type_information.finder();
-        {
-            let mut type_iter = self.type_information.iter();
-            while (type_iter.next()?).is_some() {
-                type_finder.update(&type_iter);
-            }
-        }
+        let type_finder = self.type_finder()?;
+        let id_finder = self.id_finder_if(print_local_variables && print_inlined_call_sites)?;
+        let local_variable_format = self.local_variable_format(
+            print_local_variables,
+            print_local_variable_locations,
+            print_inlined_call_sites,
+            indentation,
+        );
+        let mut needed_types = pdb_types::NeededTypeSet::new();
 
+        let cross_module_resolver = CrossModuleResolver::new(self, Some(&module_info));
         let mut result = String::default();
         module_info.symbols()?.for_each(|symbol| {
             let reconstructed_symbol = self.reconstruct_symbol(
                 &type_finder,
+                id_finder.as_ref(),
+                &cross_module_resolver,
                 Some(&module_info),
                 (module_index, symbol.index().0),
                 &symbol,
                 primitives_flavor,
                 print_access_specifiers,
+                local_variable_format.as_ref(),
+                &mut needed_types,
             );
             if let Some(reconstructed_symbol) = reconstructed_symbol {
                 result += &reconstructed_symbol;
@@ -895,6 +1109,85 @@ where
         })?;
 
         Ok(result)
+    }
+
+    /// Returns a `TypeFinder` able to find every type of the PDB
+    fn type_finder(&self) -> Result<pdb::TypeFinder<'_>> {
+        let mut type_finder = self.type_information.finder();
+        let mut type_iter = self.type_information.iter();
+        while (type_iter.next()?).is_some() {
+            type_finder.update(&type_iter);
+        }
+        Ok(type_finder)
+    }
+
+    /// Returns an `IdFinder` able to find every ID of the PDB when `needed`
+    /// and the PDB has IDs.
+    fn id_finder_if(&self, needed: bool) -> Result<Option<pdb::IdFinder<'_>>> {
+        let Some(id_information) = self.id_information.as_ref().filter(|_| needed) else {
+            return Ok(None);
+        };
+        let mut id_finder = id_information.finder();
+        let mut id_iter = id_information.iter();
+        while (id_iter.next()?).is_some() {
+            id_finder.update(&id_iter);
+        }
+        Ok(Some(id_finder))
+    }
+
+    fn local_variable_format(
+        &self,
+        print_local_variables: bool,
+        print_local_variable_locations: bool,
+        print_inlined_call_sites: bool,
+        indentation: IndentationFlavor,
+    ) -> Option<LocalVariableFormat<'static>> {
+        print_local_variables.then(|| LocalVariableFormat {
+            print_locations: print_local_variable_locations,
+            print_inlined_call_sites,
+            indent: indentation.as_str(),
+            machine_type: self.machine_type,
+        })
+    }
+
+    /// With `reconstruct_dependencies`, prepends the definitions of the types
+    /// a symbol uses (`needed_types`) and of their dependencies to the
+    /// symbol's reconstruction.
+    #[allow(clippy::too_many_arguments)]
+    fn prepend_type_definitions(
+        &self,
+        type_finder: &pdb::TypeFinder,
+        reconstructed_symbol: String,
+        needed_types: &pdb_types::NeededTypeSet,
+        reconstruct_dependencies: bool,
+        fmt_configuration: &DataFormatConfiguration,
+        type_name_flavor: &TypeNameFlavor,
+        ignore_std_types: bool,
+        print_argument_names: bool,
+        print_method_rvas: bool,
+    ) -> Result<String> {
+        if !reconstruct_dependencies || needed_types.is_empty() {
+            return Ok(reconstructed_symbol);
+        }
+        let mut root_types: Vec<TypeIndex> = needed_types
+            .iter()
+            .map(|(type_index, _)| type_index.0)
+            .collect();
+        // Deterministic output
+        root_types.sort_unstable();
+        root_types.dedup();
+        let (type_definitions, _) = self.reconstruct_types(
+            type_finder,
+            &root_types,
+            None,
+            fmt_configuration,
+            type_name_flavor,
+            ignore_std_types,
+            print_argument_names,
+            print_method_rvas,
+            true,
+        )?;
+        Ok(format!("{type_definitions}\n{reconstructed_symbol}"))
     }
 
     fn reconstruct_type_by_type_index_internal(
@@ -945,18 +1238,56 @@ where
             primitives: primitives_flavor,
             elaborated_type_specifiers: print_elaborated_type_specifiers,
         };
+        self.reconstruct_types(
+            type_finder,
+            &[type_index],
+            Some(type_index),
+            &fmt_configuration,
+            &type_name_flavor,
+            ignore_std_types,
+            print_argument_names,
+            print_method_rvas,
+            reconstruct_dependencies,
+        )
+    }
+
+    /// Reconstructs `root_types` and, with `reconstruct_dependencies`, the
+    /// types they depend on. Returns the reconstruction and the types the
+    /// first root type references. `standalone_type` isn't moved into the
+    /// type declaring it when it's a nested type.
+    #[allow(clippy::too_many_arguments)]
+    fn reconstruct_types(
+        &self,
+        type_finder: &pdb::TypeFinder,
+        root_types: &[TypeIndex],
+        standalone_type: Option<TypeIndex>,
+        fmt_configuration: &DataFormatConfiguration,
+        type_name_flavor: &TypeNameFlavor,
+        ignore_std_types: bool,
+        print_argument_names: bool,
+        print_method_rvas: bool,
+        reconstruct_dependencies: bool,
+    ) -> Result<ReconstructedType> {
         let mut type_data = pdb_types::Data::new(ignore_std_types);
 
-        // If dependencies aren't needed, only process the given type index and return
+        // If dependencies aren't needed, only process the given types and return
         if !reconstruct_dependencies {
             let mut needed_types = pdb_types::NeededTypeSet::new();
-            type_data.add(
-                type_finder,
-                &self.forwarder_to_complete_type,
-                type_index.into(),
-                &type_name_flavor,
-                &mut needed_types,
-            )?;
+            let mut xrefs_from = None;
+            for root_type in root_types {
+                type_data.add(
+                    type_finder,
+                    &self.forwarder_to_complete_type,
+                    (*root_type).into(),
+                    type_name_flavor,
+                    &mut needed_types,
+                )?;
+                if xrefs_from.is_none() {
+                    let needed_types: Vec<TypeIndex> =
+                        needed_types.iter().map(|e| e.0 .0).collect();
+                    xrefs_from = Some(self.type_list_from_type_indices(&needed_types));
+                }
+            }
 
             self.assign_method_implementations(
                 &mut type_data,
@@ -966,14 +1297,12 @@ where
             )?;
             let mut reconstruction_output = String::new();
             type_data.reconstruct(
-                &fmt_configuration,
+                fmt_configuration,
                 &Default::default(),
                 &mut reconstruction_output,
             )?;
-            let needed_types: Vec<TypeIndex> = needed_types.into_iter().map(|e| e.0 .0).collect();
-            let xrefs_from = self.type_list_from_type_indices(&needed_types);
 
-            return Ok((reconstruction_output, xrefs_from));
+            return Ok((reconstruction_output, xrefs_from.unwrap_or_default()));
         }
 
         let mut xrefs_from = vec![];
@@ -982,8 +1311,8 @@ where
         {
             let dep_start = Instant::now();
 
-            // Add the requested type first
-            let mut types_to_process: VecDeque<TypeIndex> = VecDeque::from([type_index]);
+            // Add the requested types first
+            let mut types_to_process: VecDeque<TypeIndex> = root_types.iter().copied().collect();
             let mut processed_type_set = HashSet::new();
             // Keep processing new types until there's nothing to process
             loop {
@@ -999,11 +1328,11 @@ where
                         type_finder,
                         &self.forwarder_to_complete_type,
                         needed_type_index.into(),
-                        &type_name_flavor,
+                        type_name_flavor,
                         &mut needed_types,
                     )?;
-                    // Initialize only once, the first time (i.e., for the requested type)
-                    if xrefs_from.is_empty() {
+                    // Initialize only once, the first time (i.e., for the first requested type)
+                    if processed_type_set.is_empty() {
                         let needed_types: Vec<TypeIndex> =
                             needed_types.iter().map(|e| e.0 .0).collect();
                         xrefs_from = self.type_list_from_type_indices(&needed_types);
@@ -1033,8 +1362,8 @@ where
 
                 // Nested types needed by other types are reconstructed inside
                 // the type that declares them, which must be added as well
-                let missing_containing_type_names =
-                    type_data.missing_containing_type_names(type_index.into());
+                let missing_containing_type_names = type_data
+                    .missing_containing_type_names(standalone_type.map(pdb::TypeIndex::from));
                 types_to_process.extend(
                     self.complete_type_list
                         .iter()
@@ -1056,7 +1385,7 @@ where
         }
 
         // Deduce type "depth" from the dependency map
-        let mut root_types = [type_index];
+        let mut root_types = root_types.to_vec();
         merge_inlined_nested_types(
             &mut type_dependency_map,
             &mut root_types,
@@ -1072,7 +1401,7 @@ where
         )?;
         let mut reconstruction_output = String::new();
         type_data.reconstruct(
-            &fmt_configuration,
+            fmt_configuration,
             &type_depth_map,
             &mut reconstruction_output,
         )?;
@@ -1386,17 +1715,22 @@ where
         Ok(self.method_implementations.get_or_init(|| implementations))
     }
 
+    /// Reconstructs a symbol. The types it uses are added to `needed_types`.
+    #[allow(clippy::too_many_arguments)]
     fn reconstruct_symbol(
         &self,
         type_finder: &pdb::ItemFinder<'_, pdb::TypeIndex>,
+        id_finder: Option<&pdb::IdFinder<'_>>,
+        cross_module_resolver: &CrossModuleResolver<'_, 'p, T>,
         module_info: Option<&pdb::ModuleInfo>,
         symbol_index: SymbolIndex,
         symbol: &pdb::Symbol<'_>,
         primitives_flavor: PrimitiveReconstructionFlavor,
         print_access_specifiers: AccessSpecifierReconstructionFlavor,
+        local_variable_format: Option<&LocalVariableFormat<'_>>,
+        needed_types: &mut pdb_types::NeededTypeSet,
     ) -> Option<String> {
         let type_name_flavor = TypeNameFlavor::new(primitives_flavor);
-        let mut needed_types = pdb_types::NeededTypeSet::new();
         match symbol.parse().ok()? {
             pdb::SymbolData::UserDefinedType(udt) => {
                 if let Ok(type_name) = type_name(
@@ -1404,7 +1738,7 @@ where
                     &self.forwarder_to_complete_type,
                     udt.type_index,
                     &type_name_flavor,
-                    &mut needed_types,
+                    needed_types,
                 ) {
                     if type_name.0 == "..." {
                         // No type
@@ -1425,14 +1759,17 @@ where
                 // Parameter names, read from the symbols inside the procedure
                 let parameter_layout =
                     ParameterLayout::from_type(type_finder, procedure.type_index);
-                let symbol_iter = if symbol_index.0 == GLOBAL_MODULE_INDEX {
-                    Some(self.global_symbols.iter_at(symbol.index()))
-                } else if let Some(module_info) = module_info {
-                    module_info.symbols_at(symbol.index()).ok()
-                } else {
-                    None
+                // Symbols inside the procedure, starting at the procedure itself
+                let procedure_symbols = || {
+                    if symbol_index.0 == GLOBAL_MODULE_INDEX {
+                        Some(self.global_symbols.iter_at(symbol.index()))
+                    } else if let Some(module_info) = module_info {
+                        module_info.symbols_at(symbol.index()).ok()
+                    } else {
+                        None
+                    }
                 };
-                let parameter_names = parameter_layout.as_ref().zip(symbol_iter).and_then(
+                let parameter_names = parameter_layout.as_ref().zip(procedure_symbols()).and_then(
                     |(parameter_layout, symbol_iter)| {
                         procedure_parameter_names(symbol_iter, procedure.end, parameter_layout)
                     },
@@ -1447,7 +1784,7 @@ where
                     &self.forwarder_to_complete_type,
                     procedure.type_index,
                     &type_name_flavor,
-                    &mut needed_types,
+                    needed_types,
                 )
                 .ok() else {
                     return None;
@@ -1470,6 +1807,35 @@ where
                     ));
                 }
 
+                let local_variable_lines = match local_variable_format {
+                    Some(local_variable_format) => {
+                        let parameter_count = parameter_layout.as_ref().map_or(0, |layout| {
+                            layout.parameter_count + usize::from(layout.has_this)
+                        });
+                        let procedure_scope = procedure_local_variables(
+                            procedure_symbols,
+                            procedure.offset,
+                            procedure.end,
+                            parameter_count,
+                            self.machine_type,
+                        );
+                        local_variable_lines(
+                            &procedure_scope,
+                            &NameContext {
+                                type_finder,
+                                type_forwarder: &self.forwarder_to_complete_type,
+                                type_name_flavor: &type_name_flavor,
+                                id_finder,
+                                resolve_type_index: &|index| cross_module_resolver.resolve(index),
+                                resolve_id_index: &|index| cross_module_resolver.resolve(index),
+                            },
+                            local_variable_format,
+                            needed_types,
+                        )
+                    }
+                    _ => Vec::new(),
+                };
+
                 let arg_string = match (parameter_layout, parameter_names) {
                     (Some(parameter_layout), Some(parameter_names))
                         if parameter_names.iter().any(Option::is_some) =>
@@ -1479,7 +1845,7 @@ where
                             &self.forwarder_to_complete_type,
                             parameter_layout.argument_list,
                             &type_name_flavor,
-                            &mut needed_types,
+                            needed_types,
                         )
                         .ok()?;
                         let arguments = arguments
@@ -1499,15 +1865,19 @@ where
                     _ => type_name.1.clone(),
                 };
 
-                Some(format!(
-                    "{}{}{}{}; // {}CodeSize=0x{:x}",
-                    static_prefix,
-                    type_name.0,
-                    procedure.name,
-                    arg_string,
-                    symbol_rva,
-                    procedure.len,
-                ))
+                let signature = format!(
+                    "{}{}{}{}",
+                    static_prefix, type_name.0, procedure.name, arg_string
+                );
+                let comment = format!("{}CodeSize=0x{:x}", symbol_rva, procedure.len);
+                if local_variable_lines.is_empty() {
+                    Some(format!("{signature}; // {comment}"))
+                } else {
+                    Some(format!(
+                        "{signature} // {comment}\n{{\n{}\n}}",
+                        local_variable_lines.join("\n")
+                    ))
+                }
             }
 
             // Global variables
@@ -1520,7 +1890,7 @@ where
                     &self.forwarder_to_complete_type,
                     data.type_index,
                     &type_name_flavor,
-                    &mut needed_types,
+                    needed_types,
                 ) {
                     let static_prefix = if data.global { "" } else { "static " };
                     if let Some(demangled_symbol) =
@@ -1598,6 +1968,115 @@ where
                 None
             }
         }
+    }
+}
+
+/// Resolves the cross module references of a module's symbols (see
+/// `pdb::ItemIndex::is_cross_module`), which link-time code generation
+/// produces, into indices of the global type and ID streams.
+struct CrossModuleResolver<'a, 'p, T>
+where
+    T: io::Seek + io::Read + 'p,
+{
+    pdb_file: &'a PdbFile<'p, T>,
+    imports: pdb::CrossModuleImports<'a>,
+    /// Loaded on the first cross module reference
+    state: RefCell<CrossModuleState<'a, 'p>>,
+}
+
+#[derive(Default)]
+struct CrossModuleState<'a, 'p> {
+    string_table: Option<Option<pdb::StringTable<'p>>>,
+    /// Modules by lowercase name
+    modules: Option<HashMap<String, pdb::Module<'a>>>,
+    /// Exports of the modules referenced so far, by module name
+    exports: HashMap<pdb::StringRef, Option<pdb::CrossModuleExports>>,
+}
+
+impl<'a, 'p, T> CrossModuleResolver<'a, 'p, T>
+where
+    T: io::Seek + io::Read + std::fmt::Debug + 'p,
+{
+    /// Resolver for the symbols of `module_info`, or for global symbols
+    /// (which have no cross module references) with `None`
+    fn new(pdb_file: &'a PdbFile<'p, T>, module_info: Option<&'a pdb::ModuleInfo<'_>>) -> Self {
+        Self {
+            pdb_file,
+            imports: module_info
+                .and_then(|module_info| module_info.imports().ok())
+                .unwrap_or_default(),
+            state: Default::default(),
+        }
+    }
+
+    /// Returns the global index of `index`, or `index` itself when it isn't a
+    /// cross module reference or can't be resolved
+    fn resolve<I: pdb::ItemIndex>(&self, index: I) -> I {
+        if !index.is_cross_module() {
+            return index;
+        }
+        self.resolve_cross_module_reference(index).unwrap_or(index)
+    }
+
+    fn resolve_cross_module_reference<I: pdb::ItemIndex>(&self, index: I) -> Option<I> {
+        let pdb::CrossModuleRef(module_ref, local_index) =
+            self.imports.resolve_import(index).ok()?;
+        let mut state = self.state.borrow_mut();
+        if !state.exports.contains_key(&module_ref.0) {
+            let exports = self.module_exports(&mut state, module_ref);
+            state.exports.insert(module_ref.0, exports);
+        }
+        state
+            .exports
+            .get(&module_ref.0)?
+            .as_ref()?
+            .resolve_import(local_index)
+            .ok()?
+    }
+
+    /// Returns the exports of the referenced module. Module names are
+    /// compared case-insensitively, as the string table and the DBI stream
+    /// don't use the same case.
+    fn module_exports(
+        &self,
+        state: &mut CrossModuleState<'a, 'p>,
+        module_ref: pdb::ModuleRef,
+    ) -> Option<pdb::CrossModuleExports> {
+        let string_table = state
+            .string_table
+            .get_or_insert_with(|| {
+                self.pdb_file
+                    .pdb
+                    .write()
+                    .expect("lock shouldn't be poisoned")
+                    .string_table()
+                    .ok()
+            })
+            .as_ref()?;
+        let module_name = string_table
+            .get(module_ref.0)
+            .ok()?
+            .to_string()
+            .to_lowercase();
+        if state.modules.is_none() {
+            let mut modules = HashMap::new();
+            let mut module_iter = self.pdb_file.debug_information.modules().ok()?;
+            while let Ok(Some(module)) = module_iter.next() {
+                modules
+                    .entry(module.module_name().to_lowercase())
+                    .or_insert(module);
+            }
+            state.modules = Some(modules);
+        }
+        let module = state.modules.as_ref()?.get(&module_name)?;
+        self.pdb_file
+            .pdb
+            .write()
+            .expect("lock shouldn't be poisoned")
+            .module_info(module)
+            .ok()??
+            .exports()
+            .ok()
     }
 }
 

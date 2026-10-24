@@ -777,7 +777,7 @@ impl Data<'_> {
     /// the set. Nested types can only be defined inside their containing type.
     pub fn missing_containing_type_names(
         &self,
-        excluded_type_index: pdb::TypeIndex,
+        excluded_type_index: Option<pdb::TypeIndex>,
     ) -> HashSet<String> {
         let inlined_nested_types = self.inlined_nested_types();
         let names = self
@@ -796,7 +796,7 @@ impl Data<'_> {
             );
         names
             .filter(|(type_index, _)| {
-                **type_index != excluded_type_index
+                Some(**type_index) != excluded_type_index
                     && self.nested_type_indices.contains(type_index)
                     && !inlined_nested_types.contains_key(type_index)
             })

@@ -405,6 +405,10 @@ impl ResymcApp {
         primitive_types_flavor: PrimitiveReconstructionFlavor,
         print_access_specifiers: AccessSpecifierReconstructionFlavor,
         print_header: bool,
+        print_local_variables: bool,
+        print_local_variable_locations: bool,
+        print_inlined_call_sites: bool,
+        indentation: IndentationFlavor,
         highlight_syntax: bool,
         output_file_path: Option<PathBuf>,
     ) -> Result<()> {
@@ -428,6 +432,10 @@ impl ResymcApp {
                 primitive_types_flavor,
                 print_access_specifiers,
                 print_header,
+                print_local_variables,
+                print_local_variable_locations,
+                print_inlined_call_sites,
+                indentation,
             ))?;
         // Wait for the backend to finish filtering types
         if let FrontendCommand::ReconstructModuleResult(reconstructed_module) =
@@ -463,6 +471,10 @@ impl ResymcApp {
         primitive_types_flavor: PrimitiveReconstructionFlavor,
         print_access_specifiers: AccessSpecifierReconstructionFlavor,
         print_header: bool,
+        print_local_variables: bool,
+        print_local_variable_locations: bool,
+        print_inlined_call_sites: bool,
+        indentation: IndentationFlavor,
         highlight_syntax: bool,
         output_file_path: Option<PathBuf>,
     ) -> Result<()> {
@@ -510,6 +522,10 @@ impl ResymcApp {
             primitive_types_flavor,
             print_access_specifiers,
             print_header,
+            print_local_variables,
+            print_local_variable_locations,
+            print_inlined_call_sites,
+            indentation,
         ))?;
         // Wait for the backend to finish
         if let FrontendCommand::DiffResult(reconstructed_module_diff_result) =
@@ -612,6 +628,11 @@ impl ResymcApp {
         primitive_types_flavor: PrimitiveReconstructionFlavor,
         print_access_specifiers: AccessSpecifierReconstructionFlavor,
         print_header: bool,
+        print_local_variables: bool,
+        print_local_variable_locations: bool,
+        print_inlined_call_sites: bool,
+        print_dependencies: bool,
+        indentation: IndentationFlavor,
         highlight_syntax: bool,
         output_file_path: Option<PathBuf>,
     ) -> Result<()> {
@@ -631,6 +652,8 @@ impl ResymcApp {
 
         // Queue a request for the backend to reconstruct the given module
         if let Some(symbol_name) = symbol_name {
+            // Referenced types are printed with the `dump` command's default
+            // formatting
             self.backend
                 .send_command(BackendCommand::ReconstructSymbolByName(
                     PDB_MAIN_SLOT,
@@ -638,6 +661,28 @@ impl ResymcApp {
                     primitive_types_flavor,
                     print_access_specifiers,
                     print_header,
+                    print_local_variables,
+                    print_local_variable_locations,
+                    print_inlined_call_sites,
+                    crate::DEFAULT_PRINT_SIZE_FLAVOR,
+                    print_dependencies,
+                    false,
+                    false,
+                    false,
+                    false,
+                    false,
+                    false,
+                    false,
+                    false,
+                    false,
+                    false,
+                    false,
+                    crate::DEFAULT_VFTABLE_COMMENT_FLAVOR,
+                    false,
+                    false,
+                    false,
+                    indentation,
+                    false,
                 ))?;
         } else {
             self.backend
@@ -646,6 +691,10 @@ impl ResymcApp {
                     primitive_types_flavor,
                     print_access_specifiers,
                     print_header,
+                    print_local_variables,
+                    print_local_variable_locations,
+                    print_inlined_call_sites,
+                    indentation,
                 ))?;
         }
         // Wait for the backend to finish filtering types
@@ -684,6 +733,11 @@ impl ResymcApp {
         primitive_types_flavor: PrimitiveReconstructionFlavor,
         print_access_specifiers: AccessSpecifierReconstructionFlavor,
         print_header: bool,
+        print_local_variables: bool,
+        print_local_variable_locations: bool,
+        print_inlined_call_sites: bool,
+        print_dependencies: bool,
+        indentation: IndentationFlavor,
         highlight_syntax: bool,
         output_file_path: Option<PathBuf>,
     ) -> Result<()> {
@@ -735,6 +789,30 @@ impl ResymcApp {
             primitive_types_flavor,
             print_access_specifiers,
             print_header,
+            print_local_variables,
+            print_local_variable_locations,
+            print_inlined_call_sites,
+            // Referenced types are printed with the `dump` command's default
+            // formatting
+            crate::DEFAULT_PRINT_SIZE_FLAVOR,
+            print_dependencies,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            crate::DEFAULT_VFTABLE_COMMENT_FLAVOR,
+            false,
+            false,
+            false,
+            indentation,
+            false,
         ))?;
         // Wait for the backend to finish
         if let FrontendCommand::DiffResult(reconstructed_symbol_diff_result) =
@@ -1198,6 +1276,10 @@ mod tests {
                 AccessSpecifierReconstructionFlavor::Disabled,
                 false,
                 false,
+                false,
+                false,
+                IndentationFlavor::TwoSpaces,
+                false,
                 None
             )
             .is_err());
@@ -1215,6 +1297,10 @@ mod tests {
                 PrimitiveReconstructionFlavor::Microsoft,
                 AccessSpecifierReconstructionFlavor::Always,
                 true,
+                false,
+                false,
+                false,
+                IndentationFlavor::TwoSpaces,
                 true,
                 None
             )
@@ -1236,6 +1322,10 @@ mod tests {
                 PrimitiveReconstructionFlavor::Portable,
                 AccessSpecifierReconstructionFlavor::Disabled,
                 false,
+                false,
+                false,
+                false,
+                IndentationFlavor::TwoSpaces,
                 false,
                 Some(output_path.clone()),
             )
@@ -1273,6 +1363,10 @@ mod tests {
                 AccessSpecifierReconstructionFlavor::Disabled,
                 false,
                 false,
+                false,
+                false,
+                IndentationFlavor::TwoSpaces,
+                false,
                 None
             )
             .is_err());
@@ -1293,6 +1387,10 @@ mod tests {
                 PrimitiveReconstructionFlavor::Microsoft,
                 AccessSpecifierReconstructionFlavor::Always,
                 true,
+                false,
+                false,
+                false,
+                IndentationFlavor::TwoSpaces,
                 true,
                 None
             )
@@ -1318,6 +1416,10 @@ mod tests {
                 PrimitiveReconstructionFlavor::Portable,
                 AccessSpecifierReconstructionFlavor::Disabled,
                 false,
+                false,
+                false,
+                false,
+                IndentationFlavor::TwoSpaces,
                 false,
                 Some(output_path.clone()),
             )
@@ -1403,6 +1505,11 @@ mod tests {
                 AccessSpecifierReconstructionFlavor::Disabled,
                 false,
                 false,
+                false,
+                false,
+                false,
+                IndentationFlavor::TwoSpaces,
+                false,
                 None
             )
             .is_err());
@@ -1420,6 +1527,11 @@ mod tests {
                 PrimitiveReconstructionFlavor::Microsoft,
                 AccessSpecifierReconstructionFlavor::Always,
                 true,
+                false,
+                false,
+                false,
+                false,
+                IndentationFlavor::TwoSpaces,
                 true,
                 None
             )
@@ -1441,6 +1553,11 @@ mod tests {
                 PrimitiveReconstructionFlavor::Portable,
                 AccessSpecifierReconstructionFlavor::Always,
                 false,
+                false,
+                false,
+                false,
+                false,
+                IndentationFlavor::TwoSpaces,
                 false,
                 Some(output_path.clone()),
             )
@@ -1471,6 +1588,11 @@ mod tests {
                 AccessSpecifierReconstructionFlavor::Disabled,
                 false,
                 false,
+                false,
+                false,
+                false,
+                IndentationFlavor::TwoSpaces,
+                false,
                 None
             )
             .is_err());
@@ -1491,6 +1613,11 @@ mod tests {
                 PrimitiveReconstructionFlavor::Microsoft,
                 AccessSpecifierReconstructionFlavor::Always,
                 true,
+                false,
+                false,
+                false,
+                false,
+                IndentationFlavor::TwoSpaces,
                 true,
                 None
             )
@@ -1516,6 +1643,11 @@ mod tests {
                 PrimitiveReconstructionFlavor::Portable,
                 AccessSpecifierReconstructionFlavor::Disabled,
                 false,
+                false,
+                false,
+                false,
+                false,
+                IndentationFlavor::TwoSpaces,
                 false,
                 Some(output_path.clone()),
             )

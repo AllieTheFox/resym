@@ -295,6 +295,18 @@ pub enum ResymcOptions {
         /// Print C++ access specifiers
         #[structopt(short = "a", long)]
         print_access_specifiers: Option<AccessSpecifierReconstructionFlavor>,
+        /// Print the local variables of functions
+        #[structopt(long)]
+        print_local_variables: bool,
+        /// Print where local variables are stored (registers, stack offsets)
+        #[structopt(long)]
+        print_local_variable_locations: bool,
+        /// Print the local variables of inlined call sites
+        #[structopt(long)]
+        print_inlined_call_sites: bool,
+        /// Indentation: 2, 4 or tab
+        #[structopt(long)]
+        indentation: Option<IndentationFlavor>,
         /// Highlight C++ output
         #[structopt(short = "H", long)]
         highlight_syntax: bool,
@@ -318,6 +330,18 @@ pub enum ResymcOptions {
         /// Print C++ access specifiers
         #[structopt(short = "a", long)]
         print_access_specifiers: Option<AccessSpecifierReconstructionFlavor>,
+        /// Print the local variables of functions
+        #[structopt(long)]
+        print_local_variables: bool,
+        /// Print where local variables are stored (registers, stack offsets)
+        #[structopt(long)]
+        print_local_variable_locations: bool,
+        /// Print the local variables of inlined call sites
+        #[structopt(long)]
+        print_inlined_call_sites: bool,
+        /// Indentation: 2, 4 or tab
+        #[structopt(long)]
+        indentation: Option<IndentationFlavor>,
         /// Highlight C++ output and add/deleted lines
         #[structopt(short = "H", long)]
         highlight_syntax: bool,
@@ -357,6 +381,21 @@ pub enum ResymcOptions {
         /// Print C++ access specifiers
         #[structopt(short = "a", long)]
         print_access_specifiers: Option<AccessSpecifierReconstructionFlavor>,
+        /// Print the local variables of functions
+        #[structopt(long)]
+        print_local_variables: bool,
+        /// Print where local variables are stored (registers, stack offsets)
+        #[structopt(long)]
+        print_local_variable_locations: bool,
+        /// Print the local variables of inlined call sites
+        #[structopt(long)]
+        print_inlined_call_sites: bool,
+        /// Print declarations of the types the symbol uses
+        #[structopt(short = "d", long)]
+        print_dependencies: bool,
+        /// Indentation: 2, 4 or tab
+        #[structopt(long)]
+        indentation: Option<IndentationFlavor>,
         /// Highlight C++ output
         #[structopt(short = "H", long)]
         highlight_syntax: bool,
@@ -376,6 +415,18 @@ pub enum ResymcOptions {
         /// Print C++ access specifiers
         #[structopt(short = "a", long)]
         print_access_specifiers: Option<AccessSpecifierReconstructionFlavor>,
+        /// Print the local variables of functions
+        #[structopt(long)]
+        print_local_variables: bool,
+        /// Print where local variables are stored (registers, stack offsets)
+        #[structopt(long)]
+        print_local_variable_locations: bool,
+        /// Print the local variables of inlined call sites
+        #[structopt(long)]
+        print_inlined_call_sites: bool,
+        /// Indentation: 2, 4 or tab
+        #[structopt(long)]
+        indentation: Option<IndentationFlavor>,
         /// Highlight C++ output
         #[structopt(short = "H", long)]
         highlight_syntax: bool,
@@ -399,6 +450,21 @@ pub enum ResymcOptions {
         /// Print C++ access specifiers
         #[structopt(short = "a", long)]
         print_access_specifiers: Option<AccessSpecifierReconstructionFlavor>,
+        /// Print the local variables of functions
+        #[structopt(long)]
+        print_local_variables: bool,
+        /// Print where local variables are stored (registers, stack offsets)
+        #[structopt(long)]
+        print_local_variable_locations: bool,
+        /// Print the local variables of inlined call sites
+        #[structopt(long)]
+        print_inlined_call_sites: bool,
+        /// Print declarations of the types the symbol uses
+        #[structopt(short = "d", long)]
+        print_dependencies: bool,
+        /// Indentation: 2, 4 or tab
+        #[structopt(long)]
+        indentation: Option<IndentationFlavor>,
         /// Highlight C++ output and add/deleted lines
         #[structopt(short = "H", long)]
         highlight_syntax: bool,

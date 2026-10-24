@@ -11,7 +11,7 @@ use crate::settings::ResymAppSettings;
 enum SettingsTab {
     General,
     Types,
-    Methods,
+    Functions,
     Output,
 }
 
@@ -19,7 +19,7 @@ impl SettingsTab {
     const ALL: [SettingsTab; 4] = [
         SettingsTab::General,
         SettingsTab::Types,
-        SettingsTab::Methods,
+        SettingsTab::Functions,
         SettingsTab::Output,
     ];
 
@@ -27,7 +27,7 @@ impl SettingsTab {
         match self {
             SettingsTab::General => "General",
             SettingsTab::Types => "Types",
-            SettingsTab::Methods => "Methods",
+            SettingsTab::Functions => "Functions",
             SettingsTab::Output => "Output",
         }
     }
@@ -192,7 +192,7 @@ fn tab_ui(ui: &mut egui::Ui, tab: SettingsTab, settings: &mut ResymAppSettings) 
                 "Print integer values as hexadecimal",
             );
         }
-        SettingsTab::Methods => {
+        SettingsTab::Functions => {
             egui::Grid::new("method_settings")
                 .num_columns(2)
                 .show(ui, |ui| {
@@ -232,6 +232,23 @@ fn tab_ui(ui: &mut egui::Ui, tab: SettingsTab, settings: &mut ResymAppSettings) 
                 &mut settings.ignore_compiler_generated_methods,
                 "Ignore compiler generated methods",
             );
+
+            ui.add_space(INTER_SECTION_SPACING);
+            ui.label("Local variables (symbol and module views)");
+            ui.checkbox(&mut settings.print_local_variables, "Print local variables");
+            // Only apply when local variables are printed
+            ui.indent("local_variable_settings", |ui| {
+                ui.add_enabled_ui(settings.print_local_variables, |ui| {
+                    ui.checkbox(
+                        &mut settings.print_local_variable_locations,
+                        "Print registers and stack offsets",
+                    );
+                    ui.checkbox(
+                        &mut settings.print_inlined_call_sites,
+                        "Print inlined call sites",
+                    );
+                });
+            });
         }
         SettingsTab::Output => {
             egui::Grid::new("output_settings")

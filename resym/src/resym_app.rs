@@ -137,6 +137,28 @@ fn send_reconstruction_request(
                 settings.primitive_types_flavor,
                 settings.print_access_specifiers,
                 settings.print_header,
+                settings.print_local_variables,
+                settings.print_local_variable_locations,
+                settings.print_inlined_call_sites,
+                settings.size_print_flavor,
+                settings.reconstruct_dependencies,
+                settings.integers_as_hexadecimal,
+                settings.print_offset_info,
+                settings.print_brackets_new_line,
+                settings.ignore_std_types,
+                settings.ignore_compiler_generated_methods,
+                settings.preserve_member_order,
+                settings.reconstruct_namespaces,
+                settings.print_override_specifiers,
+                settings.print_argument_names,
+                settings.print_method_rvas,
+                settings.print_calling_conventions,
+                settings.vftable_comment_flavor,
+                settings.hide_base_class_offsets,
+                settings.omit_virtual_on_overrides,
+                settings.print_elaborated_type_specifiers,
+                settings.indentation,
+                settings.compact_output,
             )
         }
         (ResymAppMode::Comparing(..), ReconstructionRequest::Symbol { name, .. }) => {
@@ -147,6 +169,28 @@ fn send_reconstruction_request(
                 settings.primitive_types_flavor,
                 settings.print_access_specifiers,
                 settings.print_header,
+                settings.print_local_variables,
+                settings.print_local_variable_locations,
+                settings.print_inlined_call_sites,
+                settings.size_print_flavor,
+                settings.reconstruct_dependencies,
+                settings.integers_as_hexadecimal,
+                settings.print_offset_info,
+                settings.print_brackets_new_line,
+                settings.ignore_std_types,
+                settings.ignore_compiler_generated_methods,
+                settings.preserve_member_order,
+                settings.reconstruct_namespaces,
+                settings.print_override_specifiers,
+                settings.print_argument_names,
+                settings.print_method_rvas,
+                settings.print_calling_conventions,
+                settings.vftable_comment_flavor,
+                settings.hide_base_class_offsets,
+                settings.omit_virtual_on_overrides,
+                settings.print_elaborated_type_specifiers,
+                settings.indentation,
+                settings.compact_output,
             )
         }
         (ResymAppMode::Browsing(..), ReconstructionRequest::Module { pdb_index, .. }) => {
@@ -156,6 +200,10 @@ fn send_reconstruction_request(
                 settings.primitive_types_flavor,
                 settings.print_access_specifiers,
                 settings.print_header,
+                settings.print_local_variables,
+                settings.print_local_variable_locations,
+                settings.print_inlined_call_sites,
+                settings.indentation,
             )
         }
         (ResymAppMode::Comparing(..), ReconstructionRequest::Module { path, .. }) => {
@@ -166,6 +214,10 @@ fn send_reconstruction_request(
                 settings.primitive_types_flavor,
                 settings.print_access_specifiers,
                 settings.print_header,
+                settings.print_local_variables,
+                settings.print_local_variable_locations,
+                settings.print_inlined_call_sites,
+                settings.indentation,
             )
         }
         _ => {

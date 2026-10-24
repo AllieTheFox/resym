@@ -2,7 +2,9 @@ use std::path::Path;
 
 use resym_core::{
     pdb_file::PdbFile,
-    pdb_types::{AccessSpecifierReconstructionFlavor, PrimitiveReconstructionFlavor},
+    pdb_types::{
+        AccessSpecifierReconstructionFlavor, IndentationFlavor, PrimitiveReconstructionFlavor,
+    },
 };
 
 const TEST_PDB_FILE_PATH: &str = "tests/data/test.pdb";
@@ -18,6 +20,10 @@ fn test_module_dumping_by_path_portable() {
             TEST_MODULE_PATH,
             PrimitiveReconstructionFlavor::Portable,
             AccessSpecifierReconstructionFlavor::Always,
+            false,
+            false,
+            false,
+            IndentationFlavor::TwoSpaces,
         )
         .unwrap_or_else(|err| panic!("module dumping failed: {err}"));
 
@@ -73,7 +79,15 @@ fn test_module_dumping_by_index_internal(
     let pdb_file = PdbFile::load_from_file(Path::new(TEST_PDB_FILE_PATH)).expect("load test.pdb");
 
     let module_dump = pdb_file
-        .reconstruct_module_by_index(module_index, primitives_flavor, print_access_specifier)
+        .reconstruct_module_by_index(
+            module_index,
+            primitives_flavor,
+            print_access_specifier,
+            false,
+            false,
+            false,
+            IndentationFlavor::TwoSpaces,
+        )
         .unwrap_or_else(|_| panic!("module dumping"));
 
     insta::assert_snapshot!(snapshot_name, module_dump);

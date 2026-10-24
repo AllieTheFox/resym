@@ -54,6 +54,12 @@ pub struct ResymAppSettings {
     pub indentation: IndentationFlavor,
     // Don't separate groups of members with blank lines
     pub compact_output: bool,
+    // Print the local variables of functions in symbol and module views
+    pub print_local_variables: bool,
+    // Print where local variables are stored (registers, stack offsets)
+    pub print_local_variable_locations: bool,
+    // Print the local variables of inlined call sites
+    pub print_inlined_call_sites: bool,
 }
 
 impl Default for ResymAppSettings {
@@ -87,6 +93,9 @@ impl Default for ResymAppSettings {
             print_elaborated_type_specifiers: false,
             indentation: IndentationFlavor::TwoSpaces,
             compact_output: false,
+            print_local_variables: true,
+            print_local_variable_locations: true,
+            print_inlined_call_sites: false,
         }
     }
 }

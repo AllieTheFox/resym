@@ -140,6 +140,7 @@ where
     Ok(diff)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn diff_module_by_path<'p, T>(
     pdb_file_from: &PdbFile<'p, T>,
     pdb_file_to: &PdbFile<'p, T>,
@@ -147,6 +148,10 @@ pub fn diff_module_by_path<'p, T>(
     primitives_flavor: PrimitiveReconstructionFlavor,
     print_access_specifiers: AccessSpecifierReconstructionFlavor,
     print_header: bool,
+    print_local_variables: bool,
+    print_local_variable_locations: bool,
+    print_inlined_call_sites: bool,
+    indentation: IndentationFlavor,
 ) -> Result<Diff>
 where
     T: io::Seek + io::Read + std::fmt::Debug + 'p,
@@ -165,12 +170,21 @@ where
 
     // Reconstruct modules from both PDBs
     {
-        let reconstructed_type_from_tmp = pdb_file_from
-            .reconstruct_module_by_path(module_path, primitives_flavor, print_access_specifiers)
-            .unwrap_or_default();
-        let reconstructed_type_to_tmp = pdb_file_to
-            .reconstruct_module_by_path(module_path, primitives_flavor, print_access_specifiers)
-            .unwrap_or_default();
+        let reconstruct = |pdb_file: &PdbFile<'p, T>| {
+            pdb_file
+                .reconstruct_module_by_path(
+                    module_path,
+                    primitives_flavor,
+                    print_access_specifiers,
+                    print_local_variables,
+                    print_local_variable_locations,
+                    print_inlined_call_sites,
+                    indentation,
+                )
+                .unwrap_or_default()
+        };
+        let reconstructed_type_from_tmp = reconstruct(pdb_file_from);
+        let reconstructed_type_to_tmp = reconstruct(pdb_file_to);
         if reconstructed_type_from_tmp.is_empty() && reconstructed_type_to_tmp.is_empty() {
             // Make it obvious an error occured
             return Err(ResymCoreError::ModuleNotFoundError(module_path.to_owned()));
@@ -189,6 +203,7 @@ where
     Ok(diff)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn diff_symbol_by_name<'p, T>(
     pdb_file_from: &PdbFile<'p, T>,
     pdb_file_to: &PdbFile<'p, T>,
@@ -196,6 +211,28 @@ pub fn diff_symbol_by_name<'p, T>(
     primitives_flavor: PrimitiveReconstructionFlavor,
     print_access_specifiers: AccessSpecifierReconstructionFlavor,
     print_header: bool,
+    print_local_variables: bool,
+    print_local_variable_locations: bool,
+    print_inlined_call_sites: bool,
+    size_print_flavor: SizePrintFlavor,
+    reconstruct_dependencies: bool,
+    integers_as_hexadecimal: bool,
+    print_offset_info: bool,
+    print_brackets_new_line: bool,
+    ignore_std_types: bool,
+    ignore_compiler_generated_methods: bool,
+    preserve_member_order: bool,
+    reconstruct_namespaces: bool,
+    print_override_specifiers: bool,
+    print_argument_names: bool,
+    print_method_rvas: bool,
+    print_calling_conventions: bool,
+    vftable_comment_flavor: VftableCommentFlavor,
+    hide_base_class_offsets: bool,
+    omit_virtual_on_overrides: bool,
+    print_elaborated_type_specifiers: bool,
+    indentation: IndentationFlavor,
+    compact_output: bool,
 ) -> Result<Diff>
 where
     T: io::Seek + io::Read + std::fmt::Debug + 'p,
@@ -212,12 +249,39 @@ where
 
     // Reconstruct modules from both PDBs
     {
-        let reconstructed_symbol_from_tmp = pdb_file_from
-            .reconstruct_symbol_by_name(symbol_name, primitives_flavor, print_access_specifiers)
-            .unwrap_or_default();
-        let reconstructed_symbol_to_tmp = pdb_file_to
-            .reconstruct_symbol_by_name(symbol_name, primitives_flavor, print_access_specifiers)
-            .unwrap_or_default();
+        let reconstruct = |pdb_file: &PdbFile<'p, T>| {
+            pdb_file
+                .reconstruct_symbol_by_name(
+                    symbol_name,
+                    primitives_flavor,
+                    print_access_specifiers,
+                    print_local_variables,
+                    print_local_variable_locations,
+                    print_inlined_call_sites,
+                    reconstruct_dependencies,
+                    size_print_flavor,
+                    integers_as_hexadecimal,
+                    print_offset_info,
+                    print_brackets_new_line,
+                    ignore_std_types,
+                    ignore_compiler_generated_methods,
+                    preserve_member_order,
+                    reconstruct_namespaces,
+                    print_override_specifiers,
+                    print_argument_names,
+                    print_method_rvas,
+                    print_calling_conventions,
+                    vftable_comment_flavor,
+                    hide_base_class_offsets,
+                    omit_virtual_on_overrides,
+                    print_elaborated_type_specifiers,
+                    indentation,
+                    compact_output,
+                )
+                .unwrap_or_default()
+        };
+        let reconstructed_symbol_from_tmp = reconstruct(pdb_file_from);
+        let reconstructed_symbol_to_tmp = reconstruct(pdb_file_to);
         if reconstructed_symbol_from_tmp.is_empty() && reconstructed_symbol_to_tmp.is_empty() {
             // Make it obvious an error occured
             return Err(ResymCoreError::SymbolNotFoundError(symbol_name.to_owned()));

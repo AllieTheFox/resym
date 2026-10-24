@@ -17,6 +17,7 @@
 - Add a setting to declare types inside `namespace` blocks instead of using qualified names (`-n`/`--reconstruct-namespaces` in `resymc`)
 - Add a setting to print the parameter names of class and union methods, read from the symbols of their implementation (`-A`/`--print-argument-names` in `resymc`)
 - Add settings to print method RVAs (on by default) and calling conventions, show vftable entries as offsets or slot indices, hide base class offset comments, omit `virtual` on overrides, prefix type names with `struct`/`class`/`union`/`enum`, choose the indentation (2 or 4 spaces, or tabs), and remove blank lines between groups of members (`--print-method-rvas`, `--print-calling-conventions`, `--vftable-comment-flavor`, `--hide-base-class-offsets`, `--omit-virtual-on-overrides`, `--print-elaborated-type-specifiers`, `--indentation` and `--compact-output` in `resymc`)
+- Print the local variables of functions in symbol and module views, with their types, nested blocks and, optionally, where they are stored (registers, stack offsets and the code ranges of optimized code) and the variables of inlined call sites. Types and inlined functions of link-time code generation builds are resolved. With "Print definitions of referenced types", the types a function uses are reconstructed before it (`--print-local-variables`, `--print-local-variable-locations`, `--print-inlined-call-sites` and `--indentation` for `dump-symbol`, `dump-all-symbols`, `diff-symbol`, `dump-module` and `diff-module`, and `-d`/`--print-dependencies` for `dump-symbol` and `diff-symbol` in `resymc`)
 
 ### Changed
 
@@ -25,7 +26,8 @@
 - Parameter names in symbol dumps are read from the parameters of each function only: locals, `...`, and unnamed (`__formal`) parameters are no longer printed as parameter names, function pointer parameters keep a valid syntax, and x86 debug builds (`S_BPREL32`) now get names
 - The vftable pointer is printed as a comment (`/* void* __vftable; */`), as the compiler adds it to classes with virtual methods: reconstructed polymorphic classes no longer have an extra pointer
 - The displayed type, symbol or module is reconstructed again when a setting that affects its output changes
-- The settings window is split into "General", "Types", "Methods" and "Output" tabs, keeps the same size on every tab, and shows drop-down settings next to their label
+- The settings window is split into "General", "Types", "Functions" and "Output" tabs, keeps the same size on every tab, and shows drop-down settings next to their label
+- Looking up a symbol by name (`dump-symbol`, `diff-symbol` and symbol diffs in `resym`) prefers a function or variable to the public symbol with the same name
 
 ## [0.4.0] - 2024-03-24
 
