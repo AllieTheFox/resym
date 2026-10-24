@@ -24,6 +24,8 @@
 - "Automatic" access specifiers are only printed when the access changes, and no longer leave public members of a `class` (or members following a non-public one) without a specifier
 - Parameter names in symbol dumps are read from the parameters of each function only: locals, `...`, and unnamed (`__formal`) parameters are no longer printed as parameter names, function pointer parameters keep a valid syntax, and x86 debug builds (`S_BPREL32`) now get names
 - The vftable pointer is printed as a comment (`/* void* __vftable; */`), as the compiler adds it to classes with virtual methods: reconstructed polymorphic classes no longer have an extra pointer
+- The displayed type, symbol or module is reconstructed again when a setting that affects its output changes
+- The settings window is split into "General", "Types", "Methods" and "Output" tabs, keeps the same size on every tab, and shows drop-down settings next to their label
 
 ## [0.4.0] - 2024-03-24
 

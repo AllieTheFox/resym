@@ -6,7 +6,7 @@ use resym_core::pdb_types::VftableCommentFlavor;
 use serde::{Deserialize, Serialize};
 
 /// This struct represents the persistent settings of the application.
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 // Fields missing from older saved settings take their `Default` value
 #[serde(default)]
 pub struct ResymAppSettings {
@@ -88,6 +88,24 @@ impl Default for ResymAppSettings {
             indentation: IndentationFlavor::TwoSpaces,
             compact_output: false,
         }
+    }
+}
+
+impl ResymAppSettings {
+    /// Indicates if reconstructing with these settings can produce a different
+    /// output than with `other`. Settings applied by the UI only (theme, font,
+    /// search, syntax highlighting, line numbers) are ignored.
+    pub fn affects_reconstruction_differently(&self, other: &Self) -> bool {
+        let without_ui_settings = |settings: &Self| Self {
+            use_light_theme: false,
+            font_size: 0,
+            search_case_insensitive: false,
+            search_use_regex: false,
+            enable_syntax_hightlighting: false,
+            print_line_numbers: false,
+            ..settings.clone()
+        };
+        without_ui_settings(self) != without_ui_settings(other)
     }
 }
 

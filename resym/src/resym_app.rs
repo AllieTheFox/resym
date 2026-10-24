@@ -57,6 +57,127 @@ enum BottomPanelTab {
     XRefsFrom,
 }
 
+/// Content shown in the code view, requested again when settings change
+enum ReconstructionRequest {
+    Type { name: String, index: TypeIndex },
+    Symbol { name: String, index: SymbolIndex },
+    Module { path: String, pdb_index: usize },
+}
+
+/// Requests the backend to reconstruct (or diff, when comparing PDBs) the
+/// given content with the given settings.
+fn send_reconstruction_request(
+    backend: &Backend,
+    settings: &ResymAppSettings,
+    mode: &ResymAppMode,
+    request: &ReconstructionRequest,
+) {
+    let command = match (mode, request) {
+        (ResymAppMode::Browsing(..), ReconstructionRequest::Type { index, .. }) => {
+            BackendCommand::ReconstructTypeByIndex(
+                ResymPDBSlots::Main as usize,
+                *index,
+                settings.primitive_types_flavor,
+                settings.print_access_specifiers,
+                settings.size_print_flavor,
+                settings.print_header,
+                settings.reconstruct_dependencies,
+                settings.integers_as_hexadecimal,
+                settings.print_offset_info,
+                settings.print_brackets_new_line,
+                settings.ignore_std_types,
+                settings.ignore_compiler_generated_methods,
+                settings.preserve_member_order,
+                settings.reconstruct_namespaces,
+                settings.print_override_specifiers,
+                settings.print_argument_names,
+                settings.print_method_rvas,
+                settings.print_calling_conventions,
+                settings.vftable_comment_flavor,
+                settings.hide_base_class_offsets,
+                settings.omit_virtual_on_overrides,
+                settings.print_elaborated_type_specifiers,
+                settings.indentation,
+                settings.compact_output,
+            )
+        }
+        (ResymAppMode::Comparing(..), ReconstructionRequest::Type { name, .. }) => {
+            BackendCommand::DiffTypeByName(
+                ResymPDBSlots::Main as usize,
+                ResymPDBSlots::Diff as usize,
+                name.clone(),
+                settings.primitive_types_flavor,
+                settings.print_access_specifiers,
+                settings.size_print_flavor,
+                settings.print_header,
+                settings.reconstruct_dependencies,
+                settings.integers_as_hexadecimal,
+                settings.print_offset_info,
+                settings.print_brackets_new_line,
+                settings.ignore_std_types,
+                settings.ignore_compiler_generated_methods,
+                settings.preserve_member_order,
+                settings.reconstruct_namespaces,
+                settings.print_override_specifiers,
+                settings.print_argument_names,
+                settings.print_method_rvas,
+                settings.print_calling_conventions,
+                settings.vftable_comment_flavor,
+                settings.hide_base_class_offsets,
+                settings.omit_virtual_on_overrides,
+                settings.print_elaborated_type_specifiers,
+                settings.indentation,
+                settings.compact_output,
+            )
+        }
+        (ResymAppMode::Browsing(..), ReconstructionRequest::Symbol { index, .. }) => {
+            BackendCommand::ReconstructSymbolByIndex(
+                ResymPDBSlots::Main as usize,
+                *index,
+                settings.primitive_types_flavor,
+                settings.print_access_specifiers,
+                settings.print_header,
+            )
+        }
+        (ResymAppMode::Comparing(..), ReconstructionRequest::Symbol { name, .. }) => {
+            BackendCommand::DiffSymbolByName(
+                ResymPDBSlots::Main as usize,
+                ResymPDBSlots::Diff as usize,
+                name.clone(),
+                settings.primitive_types_flavor,
+                settings.print_access_specifiers,
+                settings.print_header,
+            )
+        }
+        (ResymAppMode::Browsing(..), ReconstructionRequest::Module { pdb_index, .. }) => {
+            BackendCommand::ReconstructModuleByIndex(
+                ResymPDBSlots::Main as usize,
+                *pdb_index,
+                settings.primitive_types_flavor,
+                settings.print_access_specifiers,
+                settings.print_header,
+            )
+        }
+        (ResymAppMode::Comparing(..), ReconstructionRequest::Module { path, .. }) => {
+            BackendCommand::DiffModuleByPath(
+                ResymPDBSlots::Main as usize,
+                ResymPDBSlots::Diff as usize,
+                path.clone(),
+                settings.primitive_types_flavor,
+                settings.print_access_specifiers,
+                settings.print_header,
+            )
+        }
+        _ => {
+            log::error!("Invalid application state");
+            return;
+        }
+    };
+    if let Err(err) = backend.send_command(command) {
+        log::error!("Failed to request reconstruction: {}", err);
+    }
+}
+
 /// Struct that represents our GUI application.
 /// It contains the whole application's context at all time.
 pub struct ResymApp {
@@ -71,6 +192,8 @@ pub struct ResymApp {
     symbol_filters: SearchFiltersComponent<SymbolFilters>,
     symbol_list: IndexListComponent<SymbolIndex>,
     selected_symbol_index: Option<SymbolIndex>,
+    /// Content shown in the code view, if any
+    last_reconstruction: Option<ReconstructionRequest>,
     module_search: TextSearchComponent,
     module_tree: ModuleTreeComponent,
     code_view: CodeViewComponent,
@@ -112,8 +235,24 @@ impl eframe::App for ResymApp {
         // Update theme if needed
         self.process_theme_update(ctx);
 
-        // Update the "Settings" window if open
+        // Update the "Settings" window if open, and refresh the code view
+        // when a setting it depends on changes
+        let previous_settings = self.settings.app_settings.clone();
         self.settings.update(ctx);
+        if self
+            .settings
+            .app_settings
+            .affects_reconstruction_differently(&previous_settings)
+        {
+            if let Some(request) = &self.last_reconstruction {
+                send_reconstruction_request(
+                    &self.backend,
+                    &self.settings.app_settings,
+                    &self.current_mode,
+                    request,
+                );
+            }
+        }
 
         // Update "Open URL" window if open
         #[cfg(feature = "http")]
@@ -173,6 +312,7 @@ impl ResymApp {
             symbol_filters: SearchFiltersComponent::new("Search filters"),
             symbol_list: IndexListComponent::new(IndexListOrdering::Alphabetical),
             selected_symbol_index: None,
+            last_reconstruction: None,
             module_search: TextSearchComponent::new(),
             module_tree: ModuleTreeComponent::new(),
             code_view: CodeViewComponent::new(),
@@ -291,78 +431,17 @@ impl ResymApp {
                             // Update currently selected type index
                             self.selected_type_index = Some(type_index);
 
-                            match self.current_mode {
-                                ResymAppMode::Browsing(..) => {
-                                    if let Err(err) = self.backend.send_command(
-                                        BackendCommand::ReconstructTypeByIndex(
-                                            ResymPDBSlots::Main as usize,
-                                            type_index,
-                                            self.settings.app_settings.primitive_types_flavor,
-                                            self.settings.app_settings.print_access_specifiers,
-                                            self.settings.app_settings.size_print_flavor,
-                                            self.settings.app_settings.print_header,
-                                            self.settings.app_settings.reconstruct_dependencies,
-                                            self.settings.app_settings.integers_as_hexadecimal,
-                                            self.settings.app_settings.print_offset_info,
-                                            self.settings.app_settings.print_brackets_new_line,
-                                            self.settings.app_settings.ignore_std_types,
-                                            self.settings.app_settings.ignore_compiler_generated_methods,
-                                            self.settings.app_settings.preserve_member_order,
-                                            self.settings.app_settings.reconstruct_namespaces,
-                                            self.settings.app_settings.print_override_specifiers,
-                                            self.settings.app_settings.print_argument_names,
-                                            self.settings.app_settings.print_method_rvas,
-                                            self.settings.app_settings.print_calling_conventions,
-                                            self.settings.app_settings.vftable_comment_flavor,
-                                            self.settings.app_settings.hide_base_class_offsets,
-                                            self.settings.app_settings.omit_virtual_on_overrides,
-                                            self.settings
-                                                .app_settings
-                                                .print_elaborated_type_specifiers,
-                                            self.settings.app_settings.indentation,
-                                            self.settings.app_settings.compact_output,
-                                        ),
-                                    ) {
-                                        log::error!("Failed to reconstruct type: {}", err);
-                                    }
-                                }
-                                ResymAppMode::Comparing(..) => {
-                                    if let Err(err) =
-                                        self.backend.send_command(BackendCommand::DiffTypeByName(
-                                            ResymPDBSlots::Main as usize,
-                                            ResymPDBSlots::Diff as usize,
-                                            type_name.to_string(),
-                                            self.settings.app_settings.primitive_types_flavor,
-                                            self.settings.app_settings.print_access_specifiers,
-                                            self.settings.app_settings.size_print_flavor,
-                                            self.settings.app_settings.print_header,
-                                            self.settings.app_settings.reconstruct_dependencies,
-                                            self.settings.app_settings.integers_as_hexadecimal,
-                                            self.settings.app_settings.print_offset_info,
-                                            self.settings.app_settings.print_brackets_new_line,
-                                            self.settings.app_settings.ignore_std_types,
-                                            self.settings.app_settings.ignore_compiler_generated_methods,
-                                            self.settings.app_settings.preserve_member_order,
-                                            self.settings.app_settings.reconstruct_namespaces,
-                                            self.settings.app_settings.print_override_specifiers,
-                                            self.settings.app_settings.print_argument_names,
-                                            self.settings.app_settings.print_method_rvas,
-                                            self.settings.app_settings.print_calling_conventions,
-                                            self.settings.app_settings.vftable_comment_flavor,
-                                            self.settings.app_settings.hide_base_class_offsets,
-                                            self.settings.app_settings.omit_virtual_on_overrides,
-                                            self.settings
-                                                .app_settings
-                                                .print_elaborated_type_specifiers,
-                                            self.settings.app_settings.indentation,
-                                            self.settings.app_settings.compact_output,
-                                        ))
-                                    {
-                                        log::error!("Failed to reconstruct type diff: {}", err);
-                                    }
-                                }
-                                _ => log::error!("Invalid application state"),
-                            }
+                            let request = ReconstructionRequest::Type {
+                                name: type_name.to_string(),
+                                index: type_index,
+                            };
+                            send_reconstruction_request(
+                                &self.backend,
+                                &self.settings.app_settings,
+                                &self.current_mode,
+                                &request,
+                            );
+                            self.last_reconstruction = Some(request);
                         };
                         // Update the type list
                         self.type_list.update(ui, &mut on_type_selected);
@@ -425,36 +504,17 @@ impl ResymApp {
                                 // Update currently selected type index
                                 self.selected_symbol_index = Some(symbol_index);
 
-                                match self.current_mode {
-                                    ResymAppMode::Browsing(..) => {
-                                        if let Err(err) = self.backend.send_command(
-                                            BackendCommand::ReconstructSymbolByIndex(
-                                                ResymPDBSlots::Main as usize,
-                                                symbol_index,
-                                                self.settings.app_settings.primitive_types_flavor,
-                                                self.settings.app_settings.print_access_specifiers,
-                                                self.settings.app_settings.print_header,
-                                            ),
-                                        ) {
-                                            log::error!("Failed to reconstruct type: {}", err);
-                                        }
-                                    }
-                                    ResymAppMode::Comparing(..) => {
-                                        if let Err(err) = self.backend.send_command(
-                                            BackendCommand::DiffSymbolByName(
-                                                ResymPDBSlots::Main as usize,
-                                                ResymPDBSlots::Diff as usize,
-                                                symbol_name.to_string(),
-                                                self.settings.app_settings.primitive_types_flavor,
-                                                self.settings.app_settings.print_access_specifiers,
-                                                self.settings.app_settings.print_header,
-                                            ),
-                                        ) {
-                                            log::error!("Failed to reconstruct type diff: {}", err);
-                                        }
-                                    }
-                                    _ => log::error!("Invalid application state"),
-                                }
+                                let request = ReconstructionRequest::Symbol {
+                                    name: symbol_name.to_string(),
+                                    index: symbol_index,
+                                };
+                                send_reconstruction_request(
+                                    &self.backend,
+                                    &self.settings.app_settings,
+                                    &self.current_mode,
+                                    &request,
+                                );
+                                self.last_reconstruction = Some(request);
                             };
 
                         // Update the symbol list
@@ -486,44 +546,23 @@ impl ResymApp {
                         ui.add_space(4.0);
 
                         // Callback run when a module is selected in the tree
-                        let on_module_selected =
-                            |module_path: &ModulePath, module_info: &ModuleInfo| match self
-                                .current_mode
-                            {
-                                ResymAppMode::Browsing(..) => {
-                                    if let Err(err) = self.backend.send_command(
-                                        BackendCommand::ReconstructModuleByIndex(
-                                            ResymPDBSlots::Main as usize,
-                                            module_info.pdb_index,
-                                            self.settings.app_settings.primitive_types_flavor,
-                                            self.settings.app_settings.print_access_specifiers,
-                                            self.settings.app_settings.print_header,
-                                        ),
-                                    ) {
-                                        log::error!("Failed to reconstruct module: {}", err);
-                                    }
-                                }
-
-                                ResymAppMode::Comparing(..) => {
-                                    if let Err(err) =
-                                        self.backend.send_command(BackendCommand::DiffModuleByPath(
-                                            ResymPDBSlots::Main as usize,
-                                            ResymPDBSlots::Diff as usize,
-                                            module_path.to_string(),
-                                            self.settings.app_settings.primitive_types_flavor,
-                                            self.settings.app_settings.print_access_specifiers,
-                                            self.settings.app_settings.print_header,
-                                        ))
-                                    {
-                                        log::error!("Failed to reconstruct type diff: {}", err);
-                                    }
-                                }
-
-                                _ => log::error!("Invalid application state"),
+                        let mut on_module_selected =
+                            |module_path: &ModulePath, module_info: &ModuleInfo| {
+                                let request = ReconstructionRequest::Module {
+                                    path: module_path.to_string(),
+                                    pdb_index: module_info.pdb_index,
+                                };
+                                send_reconstruction_request(
+                                    &self.backend,
+                                    &self.settings.app_settings,
+                                    &self.current_mode,
+                                    &request,
+                                );
+                                self.last_reconstruction = Some(request);
                             };
 
                         // Update the module list
-                        self.module_tree.update(ctx, ui, &on_module_selected);
+                        self.module_tree.update(ctx, ui, &mut on_module_selected);
                     }
                 }
             });
@@ -561,43 +600,23 @@ impl ResymApp {
                     });
                     ui.separator();
 
-                    let mut on_type_selected = |_: &str, type_index: TypeIndex| {
+                    let mut on_type_selected = |type_name: &str, type_index: TypeIndex| {
                         // Update currently selected type index
                         self.selected_type_index = Some(type_index);
 
                         // Note: only support "Browsing" mode
                         if let ResymAppMode::Browsing(..) = self.current_mode {
-                            if let Err(err) =
-                                self.backend
-                                    .send_command(BackendCommand::ReconstructTypeByIndex(
-                                        ResymPDBSlots::Main as usize,
-                                        type_index,
-                                        self.settings.app_settings.primitive_types_flavor,
-                                        self.settings.app_settings.print_access_specifiers,
-                                        self.settings.app_settings.size_print_flavor,
-                                        self.settings.app_settings.print_header,
-                                        self.settings.app_settings.reconstruct_dependencies,
-                                        self.settings.app_settings.integers_as_hexadecimal,
-                                        self.settings.app_settings.print_offset_info,
-                                        self.settings.app_settings.print_brackets_new_line,
-                                        self.settings.app_settings.ignore_std_types,
-                                        self.settings.app_settings.ignore_compiler_generated_methods,
-                                        self.settings.app_settings.preserve_member_order,
-                                        self.settings.app_settings.reconstruct_namespaces,
-                                        self.settings.app_settings.print_override_specifiers,
-                                        self.settings.app_settings.print_argument_names,
-                                        self.settings.app_settings.print_method_rvas,
-                                        self.settings.app_settings.print_calling_conventions,
-                                        self.settings.app_settings.vftable_comment_flavor,
-                                        self.settings.app_settings.hide_base_class_offsets,
-                                        self.settings.app_settings.omit_virtual_on_overrides,
-                                        self.settings.app_settings.print_elaborated_type_specifiers,
-                                        self.settings.app_settings.indentation,
-                                        self.settings.app_settings.compact_output,
-                                    ))
-                            {
-                                log::error!("Failed to reconstruct type: {}", err);
-                            }
+                            let request = ReconstructionRequest::Type {
+                                name: type_name.to_string(),
+                                index: type_index,
+                            };
+                            send_reconstruction_request(
+                                &self.backend,
+                                &self.settings.app_settings,
+                                &self.current_mode,
+                                &request,
+                            );
+                            self.last_reconstruction = Some(request);
                         }
                     };
 
@@ -740,6 +759,7 @@ impl ResymApp {
                                 ResymAppMode::Browsing(String::default(), 0, String::default());
                             // Reset selected type
                             self.selected_type_index = None;
+                            self.last_reconstruction = None;
                             // Reset xref lists
                             self.xref_to_list.update_index_list(vec![]);
                             self.xref_from_list.update_index_list(vec![]);
@@ -790,6 +810,7 @@ impl ResymApp {
                             );
                             // Reset selected type
                             self.selected_type_index = None;
+                            self.last_reconstruction = None;
                             // Reset xref lists
                             self.xref_to_list.update_index_list(vec![]);
                             self.xref_from_list.update_index_list(vec![]);

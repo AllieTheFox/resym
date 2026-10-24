@@ -48,11 +48,11 @@ impl ModuleTreeComponent {
     }
 
     /// Update/render the UI component
-    pub fn update<CB: Fn(&ModulePath, &ModuleInfo)>(
+    pub fn update<CB: FnMut(&ModulePath, &ModuleInfo)>(
         &self,
         ctx: &egui::Context,
         ui: &mut egui::Ui,
-        on_module_selected: &CB,
+        on_module_selected: &mut CB,
     ) {
         ScrollArea::vertical()
             .auto_shrink([false, false])
@@ -63,12 +63,12 @@ impl ModuleTreeComponent {
             });
     }
 
-    fn update_module_tree<CB: Fn(&ModulePath, &ModuleInfo)>(
+    fn update_module_tree<CB: FnMut(&ModulePath, &ModuleInfo)>(
         &self,
         ctx: &egui::Context,
         ui: &mut egui::Ui,
         view_node: &ModuleTreeViewNode,
-        on_module_selected: &CB,
+        on_module_selected: &mut CB,
     ) {
         if view_node.is_leaf() {
             self.update_module_leaf(ui, view_node, on_module_selected);
@@ -89,11 +89,11 @@ impl ModuleTreeComponent {
         }
     }
 
-    fn update_module_leaf<CB: Fn(&ModulePath, &ModuleInfo)>(
+    fn update_module_leaf<CB: FnMut(&ModulePath, &ModuleInfo)>(
         &self,
         ui: &mut egui::Ui,
         view_node: &ModuleTreeViewNode,
-        on_module_selected: &CB,
+        on_module_selected: &mut CB,
     ) {
         if let Some(ref module_info) = view_node.module_info() {
             if ui
