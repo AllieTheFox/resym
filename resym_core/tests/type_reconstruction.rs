@@ -181,6 +181,9 @@ fn test_type_reconstruction_internal(
                 false, // ignore_compiler_generated_methods
                 false, // preserve_member_order
                 false, // reconstruct_namespaces
+                false, // unify_namespaces
+                false, // indent_namespaces
+                false, // group_namespaces
                 false, // print_override_specifiers
                 false, // print_argument_names
                 false, // print_method_rvas
@@ -196,6 +199,7 @@ fn test_type_reconstruction_internal(
                 false, // print_elaborated_type_specifiers
                 IndentationFlavor::TwoSpaces,
                 false, // compact_output
+                false, // print_source_locations
             )
             .unwrap_or_else(|_| panic!("reconstruct type: {test_case_type_name}"));
 

@@ -7,11 +7,11 @@ use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 
 use std::{
     cell::RefCell,
-    collections::{BTreeMap, BinaryHeap, HashMap, HashSet, VecDeque},
+    collections::{BTreeMap, BTreeSet, BinaryHeap, HashMap, HashSet, VecDeque},
     fmt::Write,
     io::{self, Read, Seek},
     path::PathBuf,
-    sync::{Arc, OnceLock, RwLock},
+    sync::{Arc, LazyLock, OnceLock, RwLock},
 };
 #[cfg(not(target_arch = "wasm32"))]
 use std::{fs::File, path::Path, time::Instant};
@@ -27,7 +27,8 @@ use crate::{
     pdb_types::{
         self, is_unnamed_type, type_name, AccessSpecifierReconstructionFlavor,
         DataFormatConfiguration, IndentationFlavor, MethodImplementation, MethodImplementations,
-        PrimitiveReconstructionFlavor, SizePrintFlavor, TypeNameFlavor, VftableCommentFlavor,
+        PrimitiveReconstructionFlavor, SizePrintFlavor, TypeNameFlavor, TypeSourceLocations,
+        VftableCommentFlavor,
     },
 };
 
@@ -143,6 +144,12 @@ where
     /// Parameter names and RVAs of the methods implemented in this PDB, read
     /// from the procedure symbols of every module on first use
     method_implementations: OnceLock<MethodImplementations>,
+    /// Where types are defined, read from the IPI stream on first use
+    type_source_locations: OnceLock<TypeSourceLocations>,
+    /// The PDB's string table, loaded on first use
+    string_table: OnceLock<Option<pdb::StringTable<'p>>>,
+    /// Source files and what they define, read on first use
+    source_files: OnceLock<Vec<SourceFile>>,
     pdb: RwLock<pdb::PDB<'p, T>>,
 }
 
@@ -174,6 +181,9 @@ impl<'p> PdbFile<'p, File> {
             file_path: pdb_file_path.to_owned(),
             xref_to_map: DashMap::default().into(),
             method_implementations: OnceLock::new(),
+            type_source_locations: OnceLock::new(),
+            string_table: OnceLock::new(),
+            source_files: OnceLock::new(),
             pdb: pdb.into(),
         };
         pdb_file.load_symbols()?;
@@ -212,6 +222,9 @@ impl<'p> PdbFile<'p, PDBDataSource> {
             file_path: pdb_file_name.into(),
             xref_to_map: DashMap::default().into(),
             method_implementations: OnceLock::new(),
+            type_source_locations: OnceLock::new(),
+            string_table: OnceLock::new(),
+            source_files: OnceLock::new(),
             pdb: pdb.into(),
         };
         pdb_file.load_symbols()?;
@@ -248,6 +261,9 @@ impl<'p> PdbFile<'p, PDBDataSource> {
             file_path: pdb_file_name.into(),
             xref_to_map: DashMap::default().into(),
             method_implementations: OnceLock::new(),
+            type_source_locations: OnceLock::new(),
+            string_table: OnceLock::new(),
+            source_files: OnceLock::new(),
             pdb: pdb.into(),
         };
         pdb_file.load_symbols()?;
@@ -364,6 +380,9 @@ where
         ignore_compiler_generated_methods: bool,
         preserve_member_order: bool,
         reconstruct_namespaces: bool,
+        unify_namespaces: bool,
+        indent_namespaces: bool,
+        group_namespaces: bool,
         print_override_specifiers: bool,
         print_argument_names: bool,
         print_method_rvas: bool,
@@ -374,6 +393,7 @@ where
         print_elaborated_type_specifiers: bool,
         indentation: IndentationFlavor,
         compact_output: bool,
+        print_source_locations: bool,
     ) -> Result<ReconstructedType> {
         // Populate our `TypeFinder` and find the right type index
         let mut type_index = TypeIndex::default();
@@ -470,6 +490,9 @@ where
                 ignore_compiler_generated_methods,
                 preserve_member_order,
                 reconstruct_namespaces,
+                unify_namespaces,
+                indent_namespaces,
+                group_namespaces,
                 print_override_specifiers,
                 print_argument_names,
                 print_method_rvas,
@@ -480,6 +503,7 @@ where
                 print_elaborated_type_specifiers,
                 indentation,
                 compact_output,
+                print_source_locations,
             )
         }
     }
@@ -498,6 +522,9 @@ where
         ignore_compiler_generated_methods: bool,
         preserve_member_order: bool,
         reconstruct_namespaces: bool,
+        unify_namespaces: bool,
+        indent_namespaces: bool,
+        group_namespaces: bool,
         print_override_specifiers: bool,
         print_argument_names: bool,
         print_method_rvas: bool,
@@ -508,6 +535,7 @@ where
         print_elaborated_type_specifiers: bool,
         indentation: IndentationFlavor,
         compact_output: bool,
+        print_source_locations: bool,
     ) -> Result<ReconstructedType> {
         // Populate our `TypeFinder`
         let mut type_finder = self.type_information.finder();
@@ -532,6 +560,9 @@ where
             ignore_compiler_generated_methods,
             preserve_member_order,
             reconstruct_namespaces,
+            unify_namespaces,
+            indent_namespaces,
+            group_namespaces,
             print_override_specifiers,
             print_argument_names,
             print_method_rvas,
@@ -542,6 +573,7 @@ where
             print_elaborated_type_specifiers,
             indentation,
             compact_output,
+            print_source_locations,
         )
     }
 
@@ -629,6 +661,287 @@ where
         Ok(module_list.collect()?)
     }
 
+    /// Returns the source files that define types (according to the IPI
+    /// stream) or functions (according to the line information of modules),
+    /// sorted by path.
+    pub fn source_file_list(&self) -> ModuleList {
+        self.source_files()
+            .iter()
+            .enumerate()
+            .map(|(index, source_file)| (source_file.path.clone(), index))
+            .collect()
+    }
+
+    /// Reconstructs the types and functions defined in the source file with
+    /// the given path, in the order of their line. Types nested in a type
+    /// of the same file are written inside it.
+    #[allow(clippy::too_many_arguments)]
+    pub fn reconstruct_source_file(
+        &self,
+        source_file_path: &str,
+        primitives_flavor: PrimitiveReconstructionFlavor,
+        print_access_specifiers: AccessSpecifierReconstructionFlavor,
+        size_print_flavor: SizePrintFlavor,
+        integers_as_hexadecimal: bool,
+        print_offset_info: bool,
+        print_brackets_new_line: bool,
+        ignore_std_types: bool,
+        ignore_compiler_generated_methods: bool,
+        preserve_member_order: bool,
+        reconstruct_namespaces: bool,
+        unify_namespaces: bool,
+        indent_namespaces: bool,
+        print_override_specifiers: bool,
+        print_argument_names: bool,
+        print_method_rvas: bool,
+        print_calling_conventions: bool,
+        vftable_comment_flavor: VftableCommentFlavor,
+        hide_base_class_offsets: bool,
+        omit_virtual_on_overrides: bool,
+        print_elaborated_type_specifiers: bool,
+        indentation: IndentationFlavor,
+        compact_output: bool,
+        print_source_locations: bool,
+        print_local_variables: bool,
+        print_local_variable_locations: bool,
+        print_inlined_call_sites: bool,
+    ) -> Result<String> {
+        let Some(source_file) = self
+            .source_files()
+            .iter()
+            .find(|source_file| source_file.path.eq_ignore_ascii_case(source_file_path))
+        else {
+            return Err(ResymCoreError::SourceFileNotFoundError(
+                source_file_path.to_owned(),
+            ));
+        };
+        let type_finder = self.type_finder()?;
+        let fmt_configuration = DataFormatConfiguration {
+            print_access_specifiers,
+            size_print_flavor,
+            integers_as_hexadecimal,
+            print_offset_info,
+            print_brackets_new_line,
+            ignore_compiler_generated_methods,
+            preserve_member_order,
+            reconstruct_namespaces,
+            unify_namespaces,
+            indent_namespaces,
+            // Source files are written in line order
+            group_namespaces: false,
+            print_override_specifiers,
+            omit_virtual_on_overrides,
+            print_method_rvas,
+            print_calling_conventions,
+            vftable_comment_flavor,
+            hide_base_class_offsets,
+            indentation,
+            compact_output,
+            print_source_locations,
+        };
+        let type_name_flavor = TypeNameFlavor {
+            primitives: primitives_flavor,
+            elaborated_type_specifiers: print_elaborated_type_specifiers,
+        };
+        // Definitions, by line
+        let mut definitions: Vec<(u32, SourceFileDefinition)> = Vec::new();
+
+        // Types
+        let type_names: HashSet<String> = source_file
+            .types
+            .iter()
+            .filter_map(|(_, type_index)| defined_type_name(&type_finder, *type_index))
+            .collect();
+        // A type's definition can be recorded by several type records (e.g.,
+        // compiled in several modules): types whose reconstructions only
+        // differ by the generated names of unnamed types are written once
+        let comparison_configuration = DataFormatConfiguration {
+            print_source_locations: false,
+            ..fmt_configuration.clone()
+        };
+        let mut reconstructed_types = HashSet::new();
+        for (line, type_index) in &source_file.types {
+            let is_nested_in_file_type = defined_type_name(&type_finder, *type_index)
+                .as_deref()
+                .and_then(pdb_types::split_qualified_name)
+                .is_some_and(|(qualifier, _)| type_names.contains(qualifier));
+            if is_nested_in_file_type {
+                continue;
+            }
+            match self.reconstruct_types(
+                &type_finder,
+                &[type_index.0],
+                Some(type_index.0),
+                &comparison_configuration,
+                &type_name_flavor,
+                ignore_std_types,
+                print_argument_names,
+                print_method_rvas,
+                false,
+            ) {
+                Ok((reconstructed_type, _)) => {
+                    let reconstructed_type = reconstructed_type.trim();
+                    let deduplication_key =
+                        UNNAMED_TYPE_NAME.replace_all(reconstructed_type, "_unnamed");
+                    if !reconstructed_type.is_empty()
+                        && reconstructed_types.insert(deduplication_key.into_owned())
+                    {
+                        definitions.push((*line, SourceFileDefinition::Type(*type_index)));
+                    }
+                }
+                Err(err) => log::warn!("Failed to reconstruct type {}: {}", type_index, err),
+            }
+        }
+
+        // Functions, grouped by module
+        let id_finder = self.id_finder_if(print_local_variables && print_inlined_call_sites)?;
+        let local_variable_format = self.local_variable_format(
+            print_local_variables,
+            print_local_variable_locations,
+            print_inlined_call_sites,
+            indentation,
+        );
+        let mut functions_by_module: BTreeMap<ModuleIndex, Vec<(u32, u32)>> = BTreeMap::new();
+        for (line, (module_index, symbol_offset)) in &source_file.functions {
+            functions_by_module
+                .entry(*module_index)
+                .or_default()
+                .push((*line, *symbol_offset));
+        }
+        let mut needed_types = pdb_types::NeededTypeSet::new();
+        for (module_index, functions) in functions_by_module {
+            let Some(module) = self.debug_information.modules()?.nth(module_index)? else {
+                continue;
+            };
+            // The lock is released before reconstructing, which can load
+            // other modules
+            let module_info = self
+                .pdb
+                .write()
+                .expect("lock shouldn't be poisoned")
+                .module_info(&module)?;
+            let Some(module_info) = module_info else {
+                continue;
+            };
+            let module_context =
+                ModuleContext::new(self, Some(&module_info), print_source_locations);
+            for (line, symbol_offset) in functions {
+                let Some(symbol) = module_info.symbols_at(symbol_offset.into())?.next()? else {
+                    continue;
+                };
+                if let Some(reconstructed_function) = self.reconstruct_symbol(
+                    &type_finder,
+                    id_finder.as_ref(),
+                    &module_context,
+                    Some(&module_info),
+                    (module_index, symbol_offset),
+                    &symbol,
+                    primitives_flavor,
+                    print_access_specifiers,
+                    local_variable_format.as_ref(),
+                    &mut needed_types,
+                ) {
+                    definitions
+                        .push((line, SourceFileDefinition::Function(reconstructed_function)));
+                }
+            }
+        }
+
+        // Types can be defined in several files: their line in this file is
+        // written
+        let mut source_locations = TypeSourceLocations::new();
+        for (line, type_index) in &source_file.types {
+            source_locations
+                .entry(*type_index)
+                .or_insert_with(|| format!("{}({line})", source_file.path));
+        }
+        // Stable sort: types stay before functions starting on the same line.
+        // Consecutive types are reconstructed together, to share namespace
+        // blocks.
+        definitions.sort_by_key(|(line, _)| *line);
+        let mut reconstruction_output = String::new();
+        let mut type_run: Vec<pdb::TypeIndex> = Vec::new();
+        let definitions = definitions
+            .into_iter()
+            .map(|(_, definition)| Some(definition))
+            .chain(std::iter::once(None));
+        for definition in definitions {
+            if let Some(SourceFileDefinition::Type(type_index)) = definition {
+                type_run.push(type_index);
+                continue;
+            }
+            if !type_run.is_empty() {
+                let reconstructed_types = self.reconstruct_types_in_order(
+                    &type_finder,
+                    &type_run,
+                    &fmt_configuration,
+                    &type_name_flavor,
+                    ignore_std_types,
+                    print_argument_names,
+                    print_method_rvas,
+                    &source_locations,
+                )?;
+                writeln!(
+                    &mut reconstruction_output,
+                    "{}\n",
+                    reconstructed_types.trim()
+                )?;
+                type_run.clear();
+            }
+            if let Some(SourceFileDefinition::Function(reconstructed_function)) = definition {
+                writeln!(&mut reconstruction_output, "{reconstructed_function}\n")?;
+            }
+        }
+        Ok(reconstruction_output)
+    }
+
+    /// Reconstructs `types` (without their dependencies) in the given order.
+    /// Their source locations, when printed, come from `source_locations`.
+    #[allow(clippy::too_many_arguments)]
+    fn reconstruct_types_in_order(
+        &self,
+        type_finder: &pdb::TypeFinder,
+        types: &[pdb::TypeIndex],
+        fmt_configuration: &DataFormatConfiguration,
+        type_name_flavor: &TypeNameFlavor,
+        ignore_std_types: bool,
+        print_argument_names: bool,
+        print_method_rvas: bool,
+        source_locations: &TypeSourceLocations,
+    ) -> Result<String> {
+        let mut type_data = pdb_types::Data::new(ignore_std_types);
+        let mut needed_types = pdb_types::NeededTypeSet::new();
+        for type_index in types {
+            type_data.add(
+                type_finder,
+                &self.forwarder_to_complete_type,
+                *type_index,
+                type_name_flavor,
+                &mut needed_types,
+            )?;
+        }
+        self.assign_method_implementations(
+            &mut type_data,
+            type_finder,
+            print_argument_names,
+            print_method_rvas,
+        )?;
+        if fmt_configuration.print_source_locations {
+            type_data.assign_source_locations(source_locations, &self.forwarder_to_complete_type);
+        }
+        // Types are written from the deepest to the shallowest: the first type
+        // is the deepest
+        let type_order: BTreeMap<usize, Vec<pdb::TypeIndex>> = types
+            .iter()
+            .rev()
+            .enumerate()
+            .map(|(depth, type_index)| (depth, vec![*type_index]))
+            .collect();
+        let mut reconstruction_output = String::new();
+        type_data.reconstruct(fmt_configuration, &type_order, &mut reconstruction_output)?;
+        Ok(reconstruction_output)
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn reconstruct_symbol_by_index(
         &self,
@@ -647,6 +960,9 @@ where
         ignore_compiler_generated_methods: bool,
         preserve_member_order: bool,
         reconstruct_namespaces: bool,
+        unify_namespaces: bool,
+        indent_namespaces: bool,
+        group_namespaces: bool,
         print_override_specifiers: bool,
         print_argument_names: bool,
         print_method_rvas: bool,
@@ -657,6 +973,7 @@ where
         print_elaborated_type_specifiers: bool,
         indentation: IndentationFlavor,
         compact_output: bool,
+        print_source_locations: bool,
     ) -> Result<String> {
         let type_finder = self.type_finder()?;
         let id_finder = self.id_finder_if(print_local_variables && print_inlined_call_sites)?;
@@ -678,7 +995,7 @@ where
                     reconstructed_symbol = Some(self.reconstruct_symbol(
                         &type_finder,
                         id_finder.as_ref(),
-                        &CrossModuleResolver::new(self, None),
+                        &ModuleContext::new(self, None, print_source_locations),
                         None,
                         symbol_index,
                         &symbol,
@@ -699,14 +1016,15 @@ where
                 .expect("lock shouldn't be poisoned")
                 .module_info(&module)?;
             if let Some(module_info) = module_info {
-                let cross_module_resolver = CrossModuleResolver::new(self, Some(&module_info));
+                let module_context =
+                    ModuleContext::new(self, Some(&module_info), print_source_locations);
                 let mut module_symbols = module_info.symbols_at(symbol_index.1.into())?;
                 while let Some(symbol) = module_symbols.next()? {
                     if symbol.index().0 == symbol_index.1 {
                         reconstructed_symbol = Some(self.reconstruct_symbol(
                             &type_finder,
                             id_finder.as_ref(),
-                            &cross_module_resolver,
+                            &module_context,
                             Some(&module_info),
                             symbol_index,
                             &symbol,
@@ -741,6 +1059,9 @@ where
                 ignore_compiler_generated_methods,
                 preserve_member_order,
                 reconstruct_namespaces,
+                unify_namespaces,
+                indent_namespaces,
+                group_namespaces,
                 print_override_specifiers,
                 omit_virtual_on_overrides,
                 print_method_rvas,
@@ -749,6 +1070,7 @@ where
                 hide_base_class_offsets,
                 indentation,
                 compact_output,
+                print_source_locations,
             },
             &TypeNameFlavor {
                 primitives: primitives_flavor,
@@ -778,6 +1100,9 @@ where
         ignore_compiler_generated_methods: bool,
         preserve_member_order: bool,
         reconstruct_namespaces: bool,
+        unify_namespaces: bool,
+        indent_namespaces: bool,
+        group_namespaces: bool,
         print_override_specifiers: bool,
         print_argument_names: bool,
         print_method_rvas: bool,
@@ -788,6 +1113,7 @@ where
         print_elaborated_type_specifiers: bool,
         indentation: IndentationFlavor,
         compact_output: bool,
+        print_source_locations: bool,
     ) -> Result<String> {
         let type_finder = self.type_finder()?;
         let id_finder = self.id_finder_if(print_local_variables && print_inlined_call_sites)?;
@@ -815,7 +1141,7 @@ where
                     reconstructed_symbol = Some(self.reconstruct_symbol(
                         &type_finder,
                         id_finder.as_ref(),
-                        &CrossModuleResolver::new(self, None),
+                        &ModuleContext::new(self, None, print_source_locations),
                         None,
                         (GLOBAL_MODULE_INDEX, symbol.index().0),
                         &symbol,
@@ -848,7 +1174,11 @@ where
                                 reconstructed_symbol = Some(self.reconstruct_symbol(
                                     &type_finder,
                                     id_finder.as_ref(),
-                                    &CrossModuleResolver::new(self, Some(&module_info)),
+                                    &ModuleContext::new(
+                                        self,
+                                        Some(&module_info),
+                                        print_source_locations,
+                                    ),
                                     Some(&module_info),
                                     (module_id, symbol.index().0),
                                     &symbol,
@@ -872,7 +1202,7 @@ where
                 reconstructed_symbol = Some(self.reconstruct_symbol(
                     &type_finder,
                     id_finder.as_ref(),
-                    &CrossModuleResolver::new(self, None),
+                    &ModuleContext::new(self, None, print_source_locations),
                     None,
                     (GLOBAL_MODULE_INDEX, symbol.index().0),
                     &symbol,
@@ -904,6 +1234,9 @@ where
                 ignore_compiler_generated_methods,
                 preserve_member_order,
                 reconstruct_namespaces,
+                unify_namespaces,
+                indent_namespaces,
+                group_namespaces,
                 print_override_specifiers,
                 omit_virtual_on_overrides,
                 print_method_rvas,
@@ -912,6 +1245,7 @@ where
                 hide_base_class_offsets,
                 indentation,
                 compact_output,
+                print_source_locations,
             },
             &TypeNameFlavor {
                 primitives: primitives_flavor,
@@ -932,6 +1266,7 @@ where
         print_local_variable_locations: bool,
         print_inlined_call_sites: bool,
         indentation: IndentationFlavor,
+        print_source_locations: bool,
     ) -> Result<String> {
         let type_finder = self.type_finder()?;
         let id_finder = self.id_finder_if(print_local_variables && print_inlined_call_sites)?;
@@ -946,7 +1281,7 @@ where
         let mut reconstruction_output = String::new();
 
         // Global symbols
-        let global_cross_module_resolver = CrossModuleResolver::new(self, None);
+        let global_module_context = ModuleContext::new(self, None, print_source_locations);
         let mut symbol_table = self.global_symbols.iter();
         while let Some(symbol) = symbol_table.next()? {
             if let Ok(symbol_data) = symbol.parse() {
@@ -954,7 +1289,7 @@ where
                     if let Some(reconstructed_symbol) = self.reconstruct_symbol(
                         &type_finder,
                         id_finder.as_ref(),
-                        &global_cross_module_resolver,
+                        &global_module_context,
                         None,
                         (GLOBAL_MODULE_INDEX, symbol.index().0),
                         &symbol,
@@ -981,7 +1316,8 @@ where
                     .expect("lock shouldn't be poisoned")
                     .module_info(&module)?;
                 if let Some(module_info) = module_info {
-                    let cross_module_resolver = CrossModuleResolver::new(self, Some(&module_info));
+                    let module_context =
+                        ModuleContext::new(self, Some(&module_info), print_source_locations);
                     let mut module_symbols = module_info.symbols()?;
                     while let Some(symbol) = module_symbols.next()? {
                         if let Ok(symbol_data) = symbol.parse() {
@@ -989,7 +1325,7 @@ where
                                 if let Some(reconstructed_symbol) = self.reconstruct_symbol(
                                     &type_finder,
                                     id_finder.as_ref(),
-                                    &cross_module_resolver,
+                                    &module_context,
                                     Some(&module_info),
                                     (module_id, symbol.index().0),
                                     &symbol,
@@ -1025,6 +1361,7 @@ where
         print_local_variable_locations: bool,
         print_inlined_call_sites: bool,
         indentation: IndentationFlavor,
+        print_source_locations: bool,
     ) -> Result<String> {
         // Find index for module
         let mut modules = self.debug_information.modules()?;
@@ -1043,6 +1380,7 @@ where
                 print_local_variable_locations,
                 print_inlined_call_sites,
                 indentation,
+                print_source_locations,
             ),
         }
     }
@@ -1057,6 +1395,7 @@ where
         print_local_variable_locations: bool,
         print_inlined_call_sites: bool,
         indentation: IndentationFlavor,
+        print_source_locations: bool,
     ) -> Result<String> {
         let mut modules = self.debug_information.modules()?;
         let module = modules.nth(module_index)?.ok_or_else(|| {
@@ -1085,13 +1424,13 @@ where
         );
         let mut needed_types = pdb_types::NeededTypeSet::new();
 
-        let cross_module_resolver = CrossModuleResolver::new(self, Some(&module_info));
+        let module_context = ModuleContext::new(self, Some(&module_info), print_source_locations);
         let mut result = String::default();
         module_info.symbols()?.for_each(|symbol| {
             let reconstructed_symbol = self.reconstruct_symbol(
                 &type_finder,
                 id_finder.as_ref(),
-                &cross_module_resolver,
+                &module_context,
                 Some(&module_info),
                 (module_index, symbol.index().0),
                 &symbol,
@@ -1205,6 +1544,9 @@ where
         ignore_compiler_generated_methods: bool,
         preserve_member_order: bool,
         reconstruct_namespaces: bool,
+        unify_namespaces: bool,
+        indent_namespaces: bool,
+        group_namespaces: bool,
         print_override_specifiers: bool,
         print_argument_names: bool,
         print_method_rvas: bool,
@@ -1215,6 +1557,7 @@ where
         print_elaborated_type_specifiers: bool,
         indentation: IndentationFlavor,
         compact_output: bool,
+        print_source_locations: bool,
     ) -> Result<ReconstructedType> {
         let fmt_configuration = DataFormatConfiguration {
             print_access_specifiers,
@@ -1225,6 +1568,9 @@ where
             ignore_compiler_generated_methods,
             preserve_member_order,
             reconstruct_namespaces,
+            unify_namespaces,
+            indent_namespaces,
+            group_namespaces,
             print_override_specifiers,
             omit_virtual_on_overrides,
             print_method_rvas,
@@ -1233,6 +1579,7 @@ where
             hide_base_class_offsets,
             indentation,
             compact_output,
+            print_source_locations,
         };
         let type_name_flavor = TypeNameFlavor {
             primitives: primitives_flavor,
@@ -1295,6 +1642,7 @@ where
                 print_argument_names,
                 print_method_rvas,
             )?;
+            self.assign_source_locations(&mut type_data, fmt_configuration);
             let mut reconstruction_output = String::new();
             type_data.reconstruct(
                 fmt_configuration,
@@ -1391,7 +1739,11 @@ where
             &mut root_types,
             &type_data.inlined_nested_types(),
         );
-        let type_depth_map = compute_type_depth_map(&type_dependency_map, &root_types);
+        let mut type_depth_map = compute_type_depth_map(&type_dependency_map, &root_types);
+        if fmt_configuration.reconstruct_namespaces && fmt_configuration.group_namespaces {
+            type_depth_map =
+                group_types_by_namespace(&type_data, &type_dependency_map, &type_depth_map);
+        }
 
         self.assign_method_implementations(
             &mut type_data,
@@ -1399,6 +1751,7 @@ where
             print_argument_names,
             print_method_rvas,
         )?;
+        self.assign_source_locations(&mut type_data, fmt_configuration);
         let mut reconstruction_output = String::new();
         type_data.reconstruct(
             fmt_configuration,
@@ -1421,6 +1774,9 @@ where
         ignore_compiler_generated_methods: bool,
         preserve_member_order: bool,
         reconstruct_namespaces: bool,
+        unify_namespaces: bool,
+        indent_namespaces: bool,
+        group_namespaces: bool,
         print_override_specifiers: bool,
         print_argument_names: bool,
         print_method_rvas: bool,
@@ -1431,6 +1787,7 @@ where
         print_elaborated_type_specifiers: bool,
         indentation: IndentationFlavor,
         compact_output: bool,
+        print_source_locations: bool,
     ) -> Result<String> {
         let type_name_flavor = TypeNameFlavor {
             primitives: primitives_flavor,
@@ -1506,6 +1863,12 @@ where
                 print_argument_names,
                 print_method_rvas,
             )?;
+            if print_source_locations {
+                type_data.assign_source_locations(
+                    self.type_source_locations(),
+                    &self.forwarder_to_complete_type,
+                );
+            }
         }
 
         // Deduce type "depth" from the dependency map
@@ -1514,7 +1877,11 @@ where
             &mut processed_types,
             &type_data.inlined_nested_types(),
         );
-        let type_depth_map = compute_type_depth_map(&type_dependency_map, &processed_types);
+        let mut type_depth_map = compute_type_depth_map(&type_dependency_map, &processed_types);
+        if reconstruct_namespaces && group_namespaces {
+            type_depth_map =
+                group_types_by_namespace(&type_data, &type_dependency_map, &type_depth_map);
+        }
 
         let mut reconstruction_output = String::new();
         type_data.reconstruct(
@@ -1527,6 +1894,9 @@ where
                 ignore_compiler_generated_methods,
                 preserve_member_order,
                 reconstruct_namespaces,
+                unify_namespaces,
+                indent_namespaces,
+                group_namespaces,
                 print_override_specifiers,
                 omit_virtual_on_overrides,
                 print_method_rvas,
@@ -1535,6 +1905,7 @@ where
                 hide_base_class_offsets,
                 indentation,
                 compact_output,
+                print_source_locations,
             },
             &type_depth_map,
             &mut reconstruction_output,
@@ -1634,6 +2005,161 @@ where
             .collect()
     }
 
+    /// Sets where the types of `type_data` are defined, when requested.
+    fn assign_source_locations(
+        &self,
+        type_data: &mut pdb_types::Data<'_>,
+        fmt_configuration: &DataFormatConfiguration,
+    ) {
+        if fmt_configuration.print_source_locations {
+            type_data.assign_source_locations(
+                self.type_source_locations(),
+                &self.forwarder_to_complete_type,
+            );
+        }
+    }
+
+    /// Returns where the types of this PDB are defined (`file(line)`), read
+    /// from the IPI stream the first time.
+    fn type_source_locations(&self) -> &TypeSourceLocations {
+        self.type_source_locations.get_or_init(|| {
+            // A type defined in several files (behind `#ifdef`s) keeps its
+            // first record
+            let mut locations = TypeSourceLocations::new();
+            for (type_index, file_name, line) in self.udt_source_lines() {
+                locations
+                    .entry(type_index)
+                    .or_insert_with(|| format!("{file_name}({line})"));
+            }
+            locations
+        })
+    }
+
+    /// Returns the type index, source file and line of the types whose
+    /// definition is recorded by the `LF_UDT_SRC_LINE` and
+    /// `LF_UDT_MOD_SRC_LINE` records of the IPI stream.
+    fn udt_source_lines(&self) -> Vec<(pdb::TypeIndex, String, u32)> {
+        let start = Instant::now();
+        let Some(id_information) = &self.id_information else {
+            return Vec::new();
+        };
+        // File names are `LF_STRING_ID` records (`LF_UDT_SRC_LINE`) or in the
+        // PDB's string table (`LF_UDT_MOD_SRC_LINE`)
+        let mut file_names = HashMap::new();
+        let mut udt_sources = Vec::new();
+        let mut ids = id_information.iter();
+        while let Ok(Some(id)) = ids.next() {
+            match id.parse() {
+                Ok(pdb::IdData::String(string)) => {
+                    file_names.insert(id.index(), string.name.to_string().into_owned());
+                }
+                Ok(pdb::IdData::UserDefinedTypeSource(udt_source)) => udt_sources.push(udt_source),
+                _ => {}
+            }
+        }
+        let string_table = self.string_table();
+        let udt_source_lines = udt_sources
+            .into_iter()
+            .filter_map(|udt_source| {
+                let file_name = match udt_source.source_file {
+                    pdb::UserDefinedTypeSourceFileRef::Local(index) => {
+                        file_names.get(&index).cloned()
+                    }
+                    pdb::UserDefinedTypeSourceFileRef::Remote(_, string_ref) => string_table
+                        .and_then(|string_table| string_table.get(string_ref).ok())
+                        .map(|name| name.to_string().into_owned()),
+                }?;
+                Some((udt_source.udt, file_name, udt_source.line))
+            })
+            .collect();
+        log::debug!("Type source lines took {} ms", start.elapsed().as_millis());
+        udt_source_lines
+    }
+
+    /// Returns the PDB's string table, loaded on first use
+    fn string_table(&self) -> Option<&pdb::StringTable<'p>> {
+        self.string_table
+            .get_or_init(|| {
+                self.pdb
+                    .write()
+                    .expect("lock shouldn't be poisoned")
+                    .string_table()
+                    .ok()
+            })
+            .as_ref()
+    }
+
+    /// Returns the source files of the PDB and what they define, read from
+    /// the IPI stream and the line information of every module the first
+    /// time.
+    fn source_files(&self) -> &[SourceFile] {
+        self.source_files.get_or_init(|| {
+            let start = Instant::now();
+            // By lowercase path
+            let mut source_files: HashMap<String, SourceFile> = HashMap::new();
+            for (type_index, file_name, line) in self.udt_source_lines() {
+                source_file_entry(&mut source_files, file_name)
+                    .types
+                    .push((line, type_index));
+            }
+
+            // Functions. Identical functions folded at the same address by
+            // the linker are kept once.
+            let mut function_addresses = HashSet::new();
+            if let Ok(mut modules) = self.debug_information.modules() {
+                let mut module_index = 0;
+                while let Ok(Some(module)) = modules.next() {
+                    let module_info = self
+                        .pdb
+                        .write()
+                        .expect("lock shouldn't be poisoned")
+                        .module_info(&module);
+                    if let Ok(Some(module_info)) = module_info {
+                        let module_context = ModuleContext::new(self, Some(&module_info), true);
+                        if let Ok(mut symbols) = module_info.symbols() {
+                            while let Ok(Some(symbol)) = symbols.next() {
+                                let Ok(pdb::SymbolData::Procedure(procedure)) = symbol.parse()
+                                else {
+                                    continue;
+                                };
+                                let address = (
+                                    procedure.offset.section,
+                                    procedure.offset.offset,
+                                    procedure.name.to_string().into_owned(),
+                                );
+                                if !function_addresses.insert(address) {
+                                    continue;
+                                }
+                                if let Some((file_name, line)) = module_context
+                                    .procedure_definition(procedure.offset, procedure.len)
+                                {
+                                    source_file_entry(&mut source_files, file_name)
+                                        .functions
+                                        .push((line, (module_index, symbol.index().0)));
+                                }
+                            }
+                        }
+                    }
+                    module_index += 1;
+                }
+            }
+
+            let mut source_files: Vec<SourceFile> = source_files.into_values().collect();
+            source_files.sort_by(|a, b| a.path.cmp(&b.path));
+            for source_file in &mut source_files {
+                // Each module that compiles a type's definition records it
+                source_file.types.sort();
+                source_file.types.dedup();
+                source_file.functions.sort_by_key(|(line, _)| *line);
+            }
+            log::debug!(
+                "Source file listing took {} ms",
+                start.elapsed().as_millis()
+            );
+            source_files
+        })
+    }
+
     /// Sets the parameter names and/or RVAs of the methods of `type_data`,
     /// when requested.
     fn assign_method_implementations(
@@ -1721,7 +2247,7 @@ where
         &self,
         type_finder: &pdb::ItemFinder<'_, pdb::TypeIndex>,
         id_finder: Option<&pdb::IdFinder<'_>>,
-        cross_module_resolver: &CrossModuleResolver<'_, 'p, T>,
+        module_context: &ModuleContext<'_, 'p, T>,
         module_info: Option<&pdb::ModuleInfo>,
         symbol_index: SymbolIndex,
         symbol: &pdb::Symbol<'_>,
@@ -1798,12 +2324,22 @@ where
                     type_name.1 = type_name.1[1..].to_string();
                 }
 
+                // Where the procedure is defined, when requested and known
+                let source_location_line = module_context
+                    .procedure_definition(procedure.offset, procedure.len)
+                    .map(|(file_name, line)| format!("// {file_name}({line})\n"))
+                    .unwrap_or_default();
+
                 let static_prefix = if procedure.global { "" } else { "static " };
                 if type_name.0 == "..." {
                     // No type
                     return Some(format!(
-                        "{}void {}(); // {}CodeSize=0x{:x} (missing type information)",
-                        static_prefix, procedure.name, symbol_rva, procedure.len,
+                        "{}{}void {}(); // {}CodeSize=0x{:x} (missing type information)",
+                        source_location_line,
+                        static_prefix,
+                        procedure.name,
+                        symbol_rva,
+                        procedure.len,
                     ));
                 }
 
@@ -1826,8 +2362,8 @@ where
                                 type_forwarder: &self.forwarder_to_complete_type,
                                 type_name_flavor: &type_name_flavor,
                                 id_finder,
-                                resolve_type_index: &|index| cross_module_resolver.resolve(index),
-                                resolve_id_index: &|index| cross_module_resolver.resolve(index),
+                                resolve_type_index: &|index| module_context.resolve(index),
+                                resolve_id_index: &|index| module_context.resolve(index),
                             },
                             local_variable_format,
                             needed_types,
@@ -1871,10 +2407,10 @@ where
                 );
                 let comment = format!("{}CodeSize=0x{:x}", symbol_rva, procedure.len);
                 if local_variable_lines.is_empty() {
-                    Some(format!("{signature}; // {comment}"))
+                    Some(format!("{source_location_line}{signature}; // {comment}"))
                 } else {
                     Some(format!(
-                        "{signature} // {comment}\n{{\n{}\n}}",
+                        "{source_location_line}{signature} // {comment}\n{{\n{}\n}}",
                         local_variable_lines.join("\n")
                     ))
                 }
@@ -1971,40 +2507,73 @@ where
     }
 }
 
-/// Resolves the cross module references of a module's symbols (see
-/// `pdb::ItemIndex::is_cross_module`), which link-time code generation
-/// produces, into indices of the global type and ID streams.
-struct CrossModuleResolver<'a, 'p, T>
+/// Information about the module whose symbols are reconstructed:
+/// - resolves the cross module references of its symbols (see
+///   `pdb::ItemIndex::is_cross_module`), which link-time code generation
+///   produces, into indices of the global type and ID streams,
+/// - gives where its procedures are defined, from its line information.
+struct ModuleContext<'a, 'p, T>
 where
     T: io::Seek + io::Read + 'p,
 {
     pdb_file: &'a PdbFile<'p, T>,
     imports: pdb::CrossModuleImports<'a>,
-    /// Loaded on the first cross module reference
-    state: RefCell<CrossModuleState<'a, 'p>>,
+    /// `None` when source locations aren't requested
+    line_program: Option<pdb::LineProgram<'a>>,
+    /// Loaded on first use
+    state: RefCell<ModuleContextState<'a>>,
+}
+
+/// A definition of a source file, in the order of its line
+enum SourceFileDefinition {
+    Type(pdb::TypeIndex),
+    /// Reconstructed function
+    Function(String),
+}
+
+/// A source file and what it defines, sorted by line
+struct SourceFile {
+    path: String,
+    types: Vec<(u32, pdb::TypeIndex)>,
+    functions: Vec<(u32, SymbolIndex)>,
 }
 
 #[derive(Default)]
-struct CrossModuleState<'a, 'p> {
-    string_table: Option<Option<pdb::StringTable<'p>>>,
+struct ModuleContextState<'a> {
     /// Modules by lowercase name
     modules: Option<HashMap<String, pdb::Module<'a>>>,
     /// Exports of the modules referenced so far, by module name
     exports: HashMap<pdb::StringRef, Option<pdb::CrossModuleExports>>,
 }
 
-impl<'a, 'p, T> CrossModuleResolver<'a, 'p, T>
+/// Line numbers MSVC gives to code that has no source line (`0xfeefee`) or
+/// that must be hidden from debuggers (`0xf00f00`)
+const HIDDEN_LINE_START: u32 = 0x00f0_0f00;
+
+/// Names given to unnamed types (`_unnamed_{type index}`), which differ
+/// between type records describing the same definition
+static UNNAMED_TYPE_NAME: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(r"_unnamed_0x[0-9a-fA-F]+").expect("regex should be valid"));
+
+impl<'a, 'p, T> ModuleContext<'a, 'p, T>
 where
     T: io::Seek + io::Read + std::fmt::Debug + 'p,
 {
-    /// Resolver for the symbols of `module_info`, or for global symbols
-    /// (which have no cross module references) with `None`
-    fn new(pdb_file: &'a PdbFile<'p, T>, module_info: Option<&'a pdb::ModuleInfo<'_>>) -> Self {
+    /// Context for the symbols of `module_info`, or for global symbols
+    /// (which have no cross module references nor lines) with `None`
+    fn new(
+        pdb_file: &'a PdbFile<'p, T>,
+        module_info: Option<&'a pdb::ModuleInfo<'_>>,
+        print_source_locations: bool,
+    ) -> Self {
         Self {
             pdb_file,
             imports: module_info
                 .and_then(|module_info| module_info.imports().ok())
                 .unwrap_or_default(),
+            line_program: module_info
+                .filter(|_| print_source_locations)
+                .and_then(|module_info| module_info.line_program().ok()),
             state: Default::default(),
         }
     }
@@ -2039,21 +2608,12 @@ where
     /// don't use the same case.
     fn module_exports(
         &self,
-        state: &mut CrossModuleState<'a, 'p>,
+        state: &mut ModuleContextState<'a>,
         module_ref: pdb::ModuleRef,
     ) -> Option<pdb::CrossModuleExports> {
-        let string_table = state
-            .string_table
-            .get_or_insert_with(|| {
-                self.pdb_file
-                    .pdb
-                    .write()
-                    .expect("lock shouldn't be poisoned")
-                    .string_table()
-                    .ok()
-            })
-            .as_ref()?;
-        let module_name = string_table
+        let module_name = self
+            .pdb_file
+            .string_table()?
             .get(module_ref.0)
             .ok()?
             .to_string()
@@ -2077,6 +2637,44 @@ where
             .ok()??
             .exports()
             .ok()
+    }
+
+    /// Returns where the procedure at `offset` (of `len` bytes) is defined:
+    /// the source file and line of its first instruction. `None` when source
+    /// locations aren't requested or unknown.
+    fn procedure_definition(
+        &self,
+        offset: pdb::PdbInternalSectionOffset,
+        len: u32,
+    ) -> Option<(String, u32)> {
+        let line_program = self.line_program.as_ref()?;
+        // Line records aren't ordered by offset, and can start before the
+        // procedure
+        let mut first_line: Option<pdb::LineInfo> = None;
+        let mut lines = line_program.lines_for_symbol(offset);
+        while let Ok(Some(line)) = lines.next() {
+            let is_in_procedure = line.offset.section == offset.section
+                && line.offset.offset >= offset.offset
+                && line.offset.offset - offset.offset < len;
+            if is_in_procedure
+                && line.line_start < HIDDEN_LINE_START
+                && first_line.as_ref().map_or(true, |first_line| {
+                    line.offset.offset < first_line.offset.offset
+                })
+            {
+                first_line = Some(line);
+            }
+        }
+        let first_line = first_line?;
+        let file_info = line_program.get_file_info(first_line.file_index).ok()?;
+        let file_name = self
+            .pdb_file
+            .string_table()?
+            .get(file_info.name)
+            .ok()?
+            .to_string()
+            .into_owned();
+        Some((file_name, first_line.line_start))
     }
 }
 
@@ -2172,6 +2770,142 @@ fn compute_type_depth_map(
     );
 
     inverted_type_depth_map
+}
+
+/// Orders the types of `type_depth_map` so that the types of a namespace are
+/// written one after the other when possible. A type still comes after the
+/// types it contains by value, but among the types that can come next, those
+/// of the namespace of the previous type are preferred. Otherwise, the depth
+/// map order is kept. Returns the order as a type depth map, with one type
+/// per depth.
+fn group_types_by_namespace(
+    type_data: &pdb_types::Data,
+    type_dependency_map: &HashMap<TypeIndex, Vec<(TypeIndex, bool)>>,
+    type_depth_map: &BTreeMap<usize, Vec<pdb::TypeIndex>>,
+) -> BTreeMap<usize, Vec<pdb::TypeIndex>> {
+    // Types in the depth map order (the deepest first), referred to by their
+    // position in it
+    let types: Vec<pdb::TypeIndex> = type_depth_map.values().rev().flatten().copied().collect();
+    let positions: HashMap<TypeIndex, usize> = types
+        .iter()
+        .enumerate()
+        .map(|(position, type_index)| (type_index.0, position))
+        .collect();
+    let mut pending_dependency_counts = vec![0; types.len()];
+    let mut dependents: Vec<Vec<usize>> = vec![Vec::new(); types.len()];
+    for (position, type_index) in types.iter().enumerate() {
+        let dependencies: BTreeSet<usize> = type_dependency_map
+            .get(&type_index.0)
+            .into_iter()
+            .flatten()
+            .filter(|(child_type_index, child_is_pointer)| {
+                !child_is_pointer && *child_type_index != type_index.0
+            })
+            .filter_map(|(child_type_index, _)| positions.get(child_type_index).copied())
+            .collect();
+        pending_dependency_counts[position] = dependencies.len();
+        for dependency in dependencies {
+            dependents[dependency].push(position);
+        }
+    }
+    // Types defined inside another type are written there, so they don't
+    // change the current namespace
+    let inlined_nested_types = type_data.inlined_nested_types();
+    let namespaces: Vec<Option<Option<&str>>> = types
+        .iter()
+        .map(|type_index| {
+            (!inlined_nested_types.contains_key(type_index))
+                .then(|| type_data.definition_namespace(*type_index))
+        })
+        .collect();
+
+    // Types whose dependencies have been written, all of them and by namespace
+    let mut ready_types = BTreeSet::new();
+    let mut ready_types_by_namespace: HashMap<Option<&str>, BTreeSet<usize>> = HashMap::new();
+    let make_ready =
+        |position: usize,
+         ready_types: &mut BTreeSet<usize>,
+         ready_types_by_namespace: &mut HashMap<_, BTreeSet<usize>>| {
+            ready_types.insert(position);
+            if let Some(namespace) = namespaces[position] {
+                ready_types_by_namespace
+                    .entry(namespace)
+                    .or_default()
+                    .insert(position);
+            }
+        };
+    for (position, pending_dependency_count) in pending_dependency_counts.iter().enumerate() {
+        if *pending_dependency_count == 0 {
+            make_ready(position, &mut ready_types, &mut ready_types_by_namespace);
+        }
+    }
+    let mut is_written = vec![false; types.len()];
+    let mut order = Vec::with_capacity(types.len());
+    let mut current_namespace = None;
+    let mut first_unwritten_position = 0;
+    while order.len() < types.len() {
+        let next_position = ready_types_by_namespace
+            .get(&current_namespace)
+            .and_then(BTreeSet::first)
+            .or_else(|| ready_types.first())
+            .copied()
+            .unwrap_or_else(|| {
+                // Dependency cycle (nested types folded into their containing
+                // type can create one): the first unwritten type comes next
+                while is_written[first_unwritten_position] {
+                    first_unwritten_position += 1;
+                }
+                first_unwritten_position
+            });
+        ready_types.remove(&next_position);
+        if let Some(namespace) = namespaces[next_position] {
+            if let Some(namespace_types) = ready_types_by_namespace.get_mut(&namespace) {
+                namespace_types.remove(&next_position);
+            }
+            current_namespace = namespace;
+        }
+        is_written[next_position] = true;
+        order.push(next_position);
+        for dependent in &dependents[next_position] {
+            let pending_dependency_count = &mut pending_dependency_counts[*dependent];
+            *pending_dependency_count = pending_dependency_count.saturating_sub(1);
+            if *pending_dependency_count == 0 && !is_written[*dependent] {
+                make_ready(*dependent, &mut ready_types, &mut ready_types_by_namespace);
+            }
+        }
+    }
+
+    // Types are written from the deepest to the shallowest
+    order
+        .into_iter()
+        .rev()
+        .enumerate()
+        .map(|(depth, position)| (depth, vec![types[position]]))
+        .collect()
+}
+
+/// Returns the source file with the given path, added when missing
+fn source_file_entry(
+    source_files: &mut HashMap<String, SourceFile>,
+    path: String,
+) -> &mut SourceFile {
+    source_files
+        .entry(path.to_lowercase())
+        .or_insert_with(|| SourceFile {
+            path,
+            types: Vec::new(),
+            functions: Vec::new(),
+        })
+}
+
+/// Returns the name of the class, union or enum with the given index
+fn defined_type_name(type_finder: &pdb::TypeFinder, type_index: pdb::TypeIndex) -> Option<String> {
+    match type_finder.find(type_index).ok()?.parse().ok()? {
+        pdb::TypeData::Class(data) => Some(data.name.to_string().into_owned()),
+        pdb::TypeData::Union(data) => Some(data.name.to_string().into_owned()),
+        pdb::TypeData::Enumeration(data) => Some(data.name.to_string().into_owned()),
+        _ => None,
+    }
 }
 
 fn get_symbol_name(symbol_data: &pdb::SymbolData) -> Option<String> {

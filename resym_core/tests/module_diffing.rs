@@ -32,6 +32,7 @@ fn test_module_diffing_by_path() {
         false,
         false,
         IndentationFlavor::TwoSpaces,
+        false,
     )
     .unwrap_or_else(|err| panic!("module diffing failed: {err}"));
 

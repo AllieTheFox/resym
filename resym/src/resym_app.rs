@@ -9,7 +9,7 @@ use resym_core::{
 
 #[cfg(target_arch = "wasm32")]
 use std::{cell::RefCell, rc::Rc};
-use std::{fmt::Write, sync::Arc, vec};
+use std::{collections::HashMap, fmt::Write, sync::Arc, vec};
 
 #[cfg(feature = "http")]
 use crate::ui_components::OpenURLComponent;
@@ -47,6 +47,7 @@ enum LeftPanelTab {
     TypeSearch,
     SymbolSearch,
     ModuleBrowsing,
+    SourceFileBrowsing,
 }
 
 /// Tabs available for the bottom panel
@@ -62,6 +63,7 @@ enum ReconstructionRequest {
     Type { name: String, index: TypeIndex },
     Symbol { name: String, index: SymbolIndex },
     Module { path: String, pdb_index: usize },
+    SourceFile { path: String },
 }
 
 /// Requests the backend to reconstruct (or diff, when comparing PDBs) the
@@ -89,6 +91,9 @@ fn send_reconstruction_request(
                 settings.ignore_compiler_generated_methods,
                 settings.preserve_member_order,
                 settings.reconstruct_namespaces,
+                settings.unify_namespaces,
+                settings.indent_namespaces,
+                settings.group_namespaces,
                 settings.print_override_specifiers,
                 settings.print_argument_names,
                 settings.print_method_rvas,
@@ -99,6 +104,7 @@ fn send_reconstruction_request(
                 settings.print_elaborated_type_specifiers,
                 settings.indentation,
                 settings.compact_output,
+                settings.print_source_locations,
             )
         }
         (ResymAppMode::Comparing(..), ReconstructionRequest::Type { name, .. }) => {
@@ -118,6 +124,9 @@ fn send_reconstruction_request(
                 settings.ignore_compiler_generated_methods,
                 settings.preserve_member_order,
                 settings.reconstruct_namespaces,
+                settings.unify_namespaces,
+                settings.indent_namespaces,
+                settings.group_namespaces,
                 settings.print_override_specifiers,
                 settings.print_argument_names,
                 settings.print_method_rvas,
@@ -128,6 +137,7 @@ fn send_reconstruction_request(
                 settings.print_elaborated_type_specifiers,
                 settings.indentation,
                 settings.compact_output,
+                settings.print_source_locations,
             )
         }
         (ResymAppMode::Browsing(..), ReconstructionRequest::Symbol { index, .. }) => {
@@ -149,6 +159,9 @@ fn send_reconstruction_request(
                 settings.ignore_compiler_generated_methods,
                 settings.preserve_member_order,
                 settings.reconstruct_namespaces,
+                settings.unify_namespaces,
+                settings.indent_namespaces,
+                settings.group_namespaces,
                 settings.print_override_specifiers,
                 settings.print_argument_names,
                 settings.print_method_rvas,
@@ -159,6 +172,7 @@ fn send_reconstruction_request(
                 settings.print_elaborated_type_specifiers,
                 settings.indentation,
                 settings.compact_output,
+                settings.print_source_locations,
             )
         }
         (ResymAppMode::Comparing(..), ReconstructionRequest::Symbol { name, .. }) => {
@@ -181,6 +195,9 @@ fn send_reconstruction_request(
                 settings.ignore_compiler_generated_methods,
                 settings.preserve_member_order,
                 settings.reconstruct_namespaces,
+                settings.unify_namespaces,
+                settings.indent_namespaces,
+                settings.group_namespaces,
                 settings.print_override_specifiers,
                 settings.print_argument_names,
                 settings.print_method_rvas,
@@ -191,6 +208,7 @@ fn send_reconstruction_request(
                 settings.print_elaborated_type_specifiers,
                 settings.indentation,
                 settings.compact_output,
+                settings.print_source_locations,
             )
         }
         (ResymAppMode::Browsing(..), ReconstructionRequest::Module { pdb_index, .. }) => {
@@ -204,6 +222,7 @@ fn send_reconstruction_request(
                 settings.print_local_variable_locations,
                 settings.print_inlined_call_sites,
                 settings.indentation,
+                settings.print_source_locations,
             )
         }
         (ResymAppMode::Comparing(..), ReconstructionRequest::Module { path, .. }) => {
@@ -218,6 +237,74 @@ fn send_reconstruction_request(
                 settings.print_local_variable_locations,
                 settings.print_inlined_call_sites,
                 settings.indentation,
+                settings.print_source_locations,
+            )
+        }
+        (ResymAppMode::Browsing(..), ReconstructionRequest::SourceFile { path }) => {
+            BackendCommand::ReconstructSourceFile(
+                ResymPDBSlots::Main as usize,
+                path.clone(),
+                settings.primitive_types_flavor,
+                settings.print_access_specifiers,
+                settings.print_header,
+                settings.size_print_flavor,
+                settings.integers_as_hexadecimal,
+                settings.print_offset_info,
+                settings.print_brackets_new_line,
+                settings.ignore_std_types,
+                settings.ignore_compiler_generated_methods,
+                settings.preserve_member_order,
+                settings.reconstruct_namespaces,
+                settings.unify_namespaces,
+                settings.indent_namespaces,
+                settings.print_override_specifiers,
+                settings.print_argument_names,
+                settings.print_method_rvas,
+                settings.print_calling_conventions,
+                settings.vftable_comment_flavor,
+                settings.hide_base_class_offsets,
+                settings.omit_virtual_on_overrides,
+                settings.print_elaborated_type_specifiers,
+                settings.indentation,
+                settings.compact_output,
+                settings.print_source_locations,
+                settings.print_local_variables,
+                settings.print_local_variable_locations,
+                settings.print_inlined_call_sites,
+            )
+        }
+        (ResymAppMode::Comparing(..), ReconstructionRequest::SourceFile { path }) => {
+            BackendCommand::DiffSourceFileByPath(
+                ResymPDBSlots::Main as usize,
+                ResymPDBSlots::Diff as usize,
+                path.clone(),
+                settings.primitive_types_flavor,
+                settings.print_access_specifiers,
+                settings.print_header,
+                settings.size_print_flavor,
+                settings.integers_as_hexadecimal,
+                settings.print_offset_info,
+                settings.print_brackets_new_line,
+                settings.ignore_std_types,
+                settings.ignore_compiler_generated_methods,
+                settings.preserve_member_order,
+                settings.reconstruct_namespaces,
+                settings.unify_namespaces,
+                settings.indent_namespaces,
+                settings.print_override_specifiers,
+                settings.print_argument_names,
+                settings.print_method_rvas,
+                settings.print_calling_conventions,
+                settings.vftable_comment_flavor,
+                settings.hide_base_class_offsets,
+                settings.omit_virtual_on_overrides,
+                settings.print_elaborated_type_specifiers,
+                settings.indentation,
+                settings.compact_output,
+                settings.print_source_locations,
+                settings.print_local_variables,
+                settings.print_local_variable_locations,
+                settings.print_inlined_call_sites,
             )
         }
         _ => {
@@ -248,6 +335,12 @@ pub struct ResymApp {
     last_reconstruction: Option<ReconstructionRequest>,
     module_search: TextSearchComponent,
     module_tree: ModuleTreeComponent,
+    source_file_search: TextSearchComponent,
+    /// Source files, shown like modules
+    source_file_tree: ModuleTreeComponent,
+    /// Exact paths of the listed source files, by index (tree paths don't
+    /// keep `.` components)
+    source_file_paths: HashMap<usize, String>,
     code_view: CodeViewComponent,
     // Components used in the bottom panel
     bottom_panel_selected_tab: BottomPanelTab,
@@ -367,6 +460,9 @@ impl ResymApp {
             last_reconstruction: None,
             module_search: TextSearchComponent::new(),
             module_tree: ModuleTreeComponent::new(),
+            source_file_search: TextSearchComponent::new(),
+            source_file_tree: ModuleTreeComponent::new(),
+            source_file_paths: HashMap::new(),
             code_view: CodeViewComponent::new(),
             bottom_panel_selected_tab: BottomPanelTab::Console,
             console: ConsoleComponent::new(logger),
@@ -422,6 +518,11 @@ impl ResymApp {
                         &mut self.left_panel_selected_tab,
                         LeftPanelTab::ModuleBrowsing,
                         "Browse modules",
+                    );
+                    ui.selectable_value(
+                        &mut self.left_panel_selected_tab,
+                        LeftPanelTab::SourceFileBrowsing,
+                        "Browse files",
                     );
                 });
                 ui.separator();
@@ -615,6 +716,51 @@ impl ResymApp {
 
                         // Update the module list
                         self.module_tree.update(ctx, ui, &mut on_module_selected);
+                    }
+
+                    LeftPanelTab::SourceFileBrowsing => {
+                        // Callback run when the search query changes
+                        let on_query_update = |search_query: &str| match self.current_mode {
+                            ResymAppMode::Browsing(..) | ResymAppMode::Comparing(..) => {
+                                // Request a source file list update
+                                if let Err(err) =
+                                    self.backend.send_command(BackendCommand::ListSourceFiles(
+                                        ResymPDBSlots::Main as usize,
+                                        search_query.to_string(),
+                                        self.settings.app_settings.search_case_insensitive,
+                                        self.settings.app_settings.search_use_regex,
+                                    ))
+                                {
+                                    log::error!("Failed to update source file list: {}", err);
+                                }
+                            }
+                            _ => {}
+                        };
+                        ui.label("Search");
+                        self.source_file_search.update(ui, &on_query_update);
+                        ui.separator();
+                        ui.add_space(4.0);
+
+                        // Callback run when a source file is selected in the tree
+                        let mut on_source_file_selected =
+                            |source_file_path: &ModulePath, source_file_info: &ModuleInfo| {
+                                let path = self
+                                    .source_file_paths
+                                    .get(&source_file_info.pdb_index)
+                                    .cloned()
+                                    .unwrap_or_else(|| source_file_path.to_string());
+                                let request = ReconstructionRequest::SourceFile { path };
+                                send_reconstruction_request(
+                                    &self.backend,
+                                    &self.settings.app_settings,
+                                    &self.current_mode,
+                                    &request,
+                                );
+                                self.last_reconstruction = Some(request);
+                            };
+
+                        self.source_file_tree
+                            .update(ctx, ui, &mut on_source_file_selected);
                     }
                 }
             });
@@ -851,6 +997,17 @@ impl ResymApp {
                             {
                                 log::error!("Failed to update module list: {}", err);
                             }
+                            // Request a source file list update
+                            if let Err(err) =
+                                self.backend.send_command(BackendCommand::ListSourceFiles(
+                                    ResymPDBSlots::Main as usize,
+                                    Default::default(),
+                                    false,
+                                    false,
+                                ))
+                            {
+                                log::error!("Failed to update source file list: {}", err);
+                            }
                         } else if pdb_slot == ResymPDBSlots::Diff as usize {
                             // Reset current mode
                             self.current_mode = ResymAppMode::Comparing(
@@ -944,6 +1101,22 @@ impl ResymApp {
                     }
                 }
 
+                FrontendCommand::ListSourceFilesResult(source_file_list_result) => {
+                    match source_file_list_result {
+                        Err(err) => {
+                            log::error!("Failed to retrieve source file list: {}", err);
+                        }
+                        Ok(source_file_list) => {
+                            self.source_file_paths = source_file_list
+                                .iter()
+                                .cloned()
+                                .map(|(path, index)| (index, path))
+                                .collect();
+                            self.source_file_tree.set_module_list(source_file_list);
+                        }
+                    }
+                }
+
                 FrontendCommand::ReconstructSymbolResult(result) => {
                     match result {
                         Err(err) => {
@@ -970,10 +1143,11 @@ impl ResymApp {
                     }
                 }
 
-                FrontendCommand::ReconstructModuleResult(module_reconstruction_result) => {
-                    match module_reconstruction_result {
+                FrontendCommand::ReconstructModuleResult(reconstruction_result)
+                | FrontendCommand::ReconstructSourceFileResult(reconstruction_result) => {
+                    match reconstruction_result {
                         Err(err) => {
-                            let error_msg = format!("Failed to reconstruct module: {}", err);
+                            let error_msg = format!("Failed to reconstruct: {}", err);
                             log::error!("{}", &error_msg);
 
                             // Show an empty "reconstruted" view

@@ -41,7 +41,7 @@ If you want to use the GUI version, simply run the `resym` executable.
 A CLI version (named `resymc`) is also available:
 
 ```
-resymc 0.4.0
+resymc 0.4.1
 resymc is a utility that allows browsing and extracting types from PDB files.
 
 USAGE:
@@ -52,15 +52,21 @@ FLAGS:
     -V, --version    Prints version information
 
 SUBCOMMANDS:
-    diff            Compute diff for a type between two given PDB files
-    diff-module     Compute diff for a module between two given PDB files
-    dump            Dump type from a given PDB file
-    dump-all        Dump all types from a given PDB file
-    dump-module     Dump module from a given PDB file
-    help            Prints this message or the help of the given subcommand(s)
-    list            List types from a given PDB file
-    list-modules    List modules from a given PDB file
-
+    diff                 Compute diff for a type between two given PDB files
+    diff-module          Compute diff for a module between two given PDB files
+    diff-source-file     Compute diff for a source file between two given PDB files
+    diff-symbol          Compute diff for a symbol between two given PDB files
+    dump                 Dump type from a given PDB file
+    dump-all             Dump all types from a given PDB file
+    dump-all-symbols     Dump all symbols from a given PDB file
+    dump-module          Dump module from a given PDB file
+    dump-source-file     Dump the types and functions defined in a source file, in line order
+    dump-symbol          Dump symbol from a given PDB file
+    help                 Prints this message or the help of the given subcommand(s)
+    list                 List types from a given PDB file
+    list-modules         List modules from a given PDB file
+    list-source-files    List source files (that define types or functions) from a given PDB file
+    list-symbols         List symbols from a given PDB file
 ```
 
 ## How to Build

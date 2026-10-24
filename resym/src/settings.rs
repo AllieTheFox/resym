@@ -34,6 +34,12 @@ pub struct ResymAppSettings {
     pub preserve_member_order: bool,
     // Wrap types in `namespace` blocks instead of using qualified names
     pub reconstruct_namespaces: bool,
+    // Keep namespace blocks open across types and nest inner namespaces
+    pub unify_namespaces: bool,
+    // Indent the contents of namespace blocks
+    pub indent_namespaces: bool,
+    // With dependencies, write the types of a namespace together when possible
+    pub group_namespaces: bool,
     // Print `override` on virtual methods overriding a base class method
     pub print_override_specifiers: bool,
     // Print parameter names of methods when the PDB has them
@@ -54,6 +60,9 @@ pub struct ResymAppSettings {
     pub indentation: IndentationFlavor,
     // Don't separate groups of members with blank lines
     pub compact_output: bool,
+    // Print where types and functions are defined (source file and line),
+    // when known
+    pub print_source_locations: bool,
     // Print the local variables of functions in symbol and module views
     pub print_local_variables: bool,
     // Print where local variables are stored (registers, stack offsets)
@@ -83,6 +92,9 @@ impl Default for ResymAppSettings {
             ignore_compiler_generated_methods: true,
             preserve_member_order: true,
             reconstruct_namespaces: true,
+            unify_namespaces: true,
+            indent_namespaces: true,
+            group_namespaces: true,
             print_override_specifiers: true,
             print_argument_names: true,
             print_method_rvas: true,
@@ -93,6 +105,7 @@ impl Default for ResymAppSettings {
             print_elaborated_type_specifiers: false,
             indentation: IndentationFlavor::TwoSpaces,
             compact_output: false,
+            print_source_locations: true,
             print_local_variables: true,
             print_local_variable_locations: true,
             print_inlined_call_sites: false,

@@ -10,6 +10,7 @@ mod union;
 use std::cell::Cell;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
+use std::fmt::Write as _;
 use std::ops::Range;
 
 use crate::error::{Result, ResymCoreError};
@@ -34,6 +35,21 @@ use self::forward_declaration::{ForwardDeclaration, ForwardDeclarationKind};
 pub type NeededTypeSet = HashSet<(pdb::TypeIndex, bool)>;
 
 pub type TypeForwarder = dashmap::DashMap<pdb::TypeIndex, pdb::TypeIndex>;
+
+/// Where types are defined (`file(line)`), by type index
+pub type TypeSourceLocations = HashMap<pdb::TypeIndex, String>;
+
+/// Returns where the type with the given index is defined, if known
+fn type_source_location(
+    locations: &TypeSourceLocations,
+    type_forwarder: &TypeForwarder,
+    type_index: pdb::TypeIndex,
+) -> Option<String> {
+    locations
+        .get(&type_index)
+        .or_else(|| locations.get(&resolve_complete_type_index(type_forwarder, type_index)))
+        .cloned()
+}
 
 /// Information read from the symbols of a method's implementation
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -600,12 +616,23 @@ impl Data<'_> {
         let inlined_nested_types = self.inlined_nested_types();
         let mut namespace_scope = NamespaceScope::new(
             fmt_configuration.reconstruct_namespaces,
+            fmt_configuration.unify_namespaces,
+            fmt_configuration.indent_namespaces,
+            fmt_configuration.print_brackets_new_line,
             &self.nested_type_indices,
         );
+        // The contents of namespace blocks are indented through this writer
+        let output_writer = &mut IndentingWriter::new(output_writer, fmt_configuration.indent());
 
-        // Forward declarations
+        // Forward declarations (they don't depend on each other: sorting them
+        // by namespace keeps the order of each namespace's declarations)
+        let mut forward_declarations: Vec<_> = self.forward_declarations.iter().collect();
+        if fmt_configuration.reconstruct_namespaces && fmt_configuration.group_namespaces {
+            forward_declarations
+                .sort_by_key(|(type_index, _)| self.definition_namespace(**type_index));
+        }
         let mut is_first_forward_declaration = true;
-        for (type_index, e) in &self.forward_declarations {
+        for (type_index, e) in forward_declarations {
             if inlined_nested_types.contains_key(type_index) {
                 continue;
             }
@@ -668,7 +695,7 @@ impl Data<'_> {
         type_index: pdb::TypeIndex,
         fmt_configuration: &DataFormatConfiguration,
         namespace_scope: &mut NamespaceScope,
-        output_writer: &mut impl std::fmt::Write,
+        output_writer: &mut IndentingWriter<'_, impl std::fmt::Write>,
     ) -> fmt::Result {
         // Enum definitions
         if let Some(e) = self.enums.get(&type_index) {
@@ -719,6 +746,41 @@ impl Data<'_> {
         for u in self.unions.values_mut() {
             u.assign_method_implementations(implementations, parameter_names, rvas);
         }
+    }
+
+    /// Sets where every type of this set (including nested types) is defined.
+    pub fn assign_source_locations(
+        &mut self,
+        locations: &TypeSourceLocations,
+        type_forwarder: &TypeForwarder,
+    ) {
+        for e in self.enums.values_mut() {
+            e.source_location = type_source_location(locations, type_forwarder, e.index);
+        }
+        for class in self.classes.values_mut() {
+            class.assign_source_locations(locations, type_forwarder);
+        }
+        for u in self.unions.values_mut() {
+            u.assign_source_locations(locations, type_forwarder);
+        }
+    }
+
+    /// Returns the namespace the definition of the given type is written in
+    /// when namespaces are reconstructed, if any.
+    pub fn definition_namespace(&self, type_index: pdb::TypeIndex) -> Option<&str> {
+        if self.nested_type_indices.contains(&type_index) {
+            return None;
+        }
+        let name = self
+            .enums
+            .get(&type_index)
+            .map(|e| &e.name)
+            .or_else(|| self.classes.get(&type_index).map(|c| &c.name))
+            .or_else(|| self.unions.get(&type_index).map(|u| &u.name))
+            .or_else(|| self.forward_declarations.get(&type_index).map(|f| &f.name))?;
+        split_qualified_name(name)
+            .map(|(namespace, _)| namespace)
+            .filter(|namespace| is_namespace_path(namespace))
     }
 
     /// Returns the types that are also defined inside another type of this
@@ -943,6 +1005,7 @@ impl<'p> Data<'p> {
                     )?
                     .0,
                     values: Vec::new(),
+                    source_location: None,
                 };
 
                 if let Err(err) = e.add_fields(type_finder, data.fields, needed_types) {
@@ -1028,17 +1091,34 @@ impl<'p> Data<'p> {
 /// qualified names, opening and closing blocks when the namespace changes.
 struct NamespaceScope<'n> {
     enabled: bool,
+    /// Open a block per namespace component and keep the blocks of enclosing
+    /// namespaces open, instead of a block per qualified namespace
+    unify: bool,
+    /// Indent the contents of each open block by one level
+    indent: bool,
+    /// Opening braces go on their own line
+    brackets_new_line: bool,
     /// Types whose qualifier is their containing type, not a namespace
     nested_type_indices: &'n HashSet<pdb::TypeIndex>,
-    current_namespace: Option<String>,
+    /// Open blocks, with the namespace components each block opens
+    open_blocks: Vec<Vec<String>>,
 }
 
 impl<'n> NamespaceScope<'n> {
-    fn new(enabled: bool, nested_type_indices: &'n HashSet<pdb::TypeIndex>) -> Self {
+    fn new(
+        enabled: bool,
+        unify: bool,
+        indent: bool,
+        brackets_new_line: bool,
+        nested_type_indices: &'n HashSet<pdb::TypeIndex>,
+    ) -> Self {
         Self {
             enabled,
+            unify,
+            indent,
+            brackets_new_line,
             nested_type_indices,
-            current_namespace: None,
+            open_blocks: Vec::new(),
         }
     }
 
@@ -1053,7 +1133,7 @@ impl<'n> NamespaceScope<'n> {
         &mut self,
         type_index: pdb::TypeIndex,
         name: &'a str,
-        f: &mut impl std::fmt::Write,
+        f: &mut IndentingWriter<'_, impl std::fmt::Write>,
     ) -> std::result::Result<(&'a str, bool), fmt::Error> {
         let (namespace, unqualified_name) =
             if self.enabled && !self.nested_type_indices.contains(&type_index) {
@@ -1066,52 +1146,150 @@ impl<'n> NamespaceScope<'n> {
             } else {
                 (None, name)
             };
-
-        let mut opened_namespace = false;
-        if self.current_namespace.as_deref() != namespace {
-            self.close(f)?;
-            if let Some(namespace) = namespace {
-                writeln!(f)?;
-                if namespace.split("::").any(|c| c == ANONYMOUS_NAMESPACE) {
-                    // `namespace a::b` can't name an anonymous namespace
-                    let openings: Vec<String> = namespace
-                        .split("::")
-                        .map(|component| {
-                            if component == ANONYMOUS_NAMESPACE {
-                                "namespace {".to_owned()
-                            } else {
-                                format!("namespace {component} {{")
-                            }
-                        })
-                        .collect();
-                    writeln!(f, "{}", openings.join(" "))?;
-                } else {
-                    writeln!(f, "namespace {namespace} {{")?;
-                }
-                self.current_namespace = Some(namespace.to_owned());
-                opened_namespace = true;
-            }
+        let components: Vec<&str> = namespace.map_or_else(Vec::new, |n| n.split("::").collect());
+        if self
+            .open_blocks
+            .iter()
+            .flatten()
+            .map(String::as_str)
+            .eq(components.iter().copied())
+        {
+            return Ok((unqualified_name, false));
         }
 
-        Ok((unqualified_name, opened_namespace))
-    }
-
-    /// Closes the current namespace block, if any.
-    fn close(&mut self, f: &mut impl std::fmt::Write) -> fmt::Result {
-        if let Some(namespace) = self.current_namespace.take() {
-            let block_count = if namespace.split("::").any(|c| c == ANONYMOUS_NAMESPACE) {
-                namespace.split("::").count()
-            } else {
-                1
-            };
-            writeln!(
+        // Blocks of the enclosing namespaces stay open when unifying (each
+        // block opens a single component then)
+        let kept_block_count = if self.unify {
+            self.open_blocks
+                .iter()
+                .zip(&components)
+                .take_while(|(block, component)| block[0] == **component)
+                .count()
+        } else {
+            0
+        };
+        while self.open_blocks.len() > kept_block_count {
+            self.close_block(f)?;
+        }
+        let opened_components = &components[kept_block_count..];
+        if opened_components.is_empty() {
+            return Ok((unqualified_name, false));
+        }
+        writeln!(f)?;
+        if self.unify {
+            for component in opened_components {
+                self.open_block(vec![(*component).to_owned()], f)?;
+            }
+        } else {
+            self.open_block(
+                opened_components.iter().map(|c| (*c).to_owned()).collect(),
                 f,
-                "{} // namespace {}",
-                "}".repeat(block_count),
-                namespace.replace(ANONYMOUS_NAMESPACE, "(anonymous)")
             )?;
         }
 
+        Ok((unqualified_name, true))
+    }
+
+    /// Closes every open namespace block.
+    fn close(&mut self, f: &mut IndentingWriter<'_, impl std::fmt::Write>) -> fmt::Result {
+        while !self.open_blocks.is_empty() {
+            self.close_block(f)?;
+        }
+        Ok(())
+    }
+
+    fn open_block(
+        &mut self,
+        components: Vec<String>,
+        f: &mut IndentingWriter<'_, impl std::fmt::Write>,
+    ) -> fmt::Result {
+        let brace_separator = if self.brackets_new_line { "\n" } else { " " };
+        if components.iter().any(|c| c == ANONYMOUS_NAMESPACE) {
+            // `namespace a::b` can't name an anonymous namespace
+            let openings: Vec<String> = components
+                .iter()
+                .map(|component| {
+                    if component == ANONYMOUS_NAMESPACE {
+                        format!("namespace{brace_separator}{{")
+                    } else {
+                        format!("namespace {component}{brace_separator}{{")
+                    }
+                })
+                .collect();
+            writeln!(f, "{}", openings.join(brace_separator))?;
+        } else {
+            writeln!(f, "namespace {}{brace_separator}{{", components.join("::"))?;
+        }
+        self.open_blocks.push(components);
+        self.update_indentation_level(f);
+        Ok(())
+    }
+
+    /// Closes the innermost open block, commented with the namespace it ends.
+    fn close_block(&mut self, f: &mut IndentingWriter<'_, impl std::fmt::Write>) -> fmt::Result {
+        let Some(components) = self.open_blocks.pop() else {
+            return Ok(());
+        };
+        self.update_indentation_level(f);
+        let brace_count = if components.iter().any(|c| c == ANONYMOUS_NAMESPACE) {
+            components.len()
+        } else {
+            1
+        };
+        let namespace = self
+            .open_blocks
+            .iter()
+            .flatten()
+            .chain(&components)
+            .map(|component| {
+                if component == ANONYMOUS_NAMESPACE {
+                    "(anonymous)"
+                } else {
+                    component.as_str()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("::");
+        writeln!(f, "{} // namespace {namespace}", "}".repeat(brace_count))
+    }
+
+    fn update_indentation_level(&self, f: &mut IndentingWriter<'_, impl std::fmt::Write>) {
+        if self.indent {
+            f.level = self.open_blocks.len();
+        }
+    }
+}
+
+/// Writes text with `level` indentations at the start of each non-empty line
+struct IndentingWriter<'w, W: std::fmt::Write> {
+    inner: &'w mut W,
+    indentation: &'static str,
+    level: usize,
+    at_line_start: bool,
+}
+
+impl<'w, W: std::fmt::Write> IndentingWriter<'w, W> {
+    fn new(inner: &'w mut W, indentation: &'static str) -> Self {
+        Self {
+            inner,
+            indentation,
+            level: 0,
+            at_line_start: true,
+        }
+    }
+}
+
+impl<W: std::fmt::Write> std::fmt::Write for IndentingWriter<'_, W> {
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        for line in s.split_inclusive('\n') {
+            if self.at_line_start && line != "\n" {
+                for _ in 0..self.level {
+                    self.inner.write_str(self.indentation)?;
+                }
+            }
+            self.inner.write_str(line)?;
+            self.at_line_start = line.ends_with('\n');
+        }
         Ok(())
     }
 }
@@ -1122,7 +1300,7 @@ const ANONYMOUS_NAMESPACE: &str = "`anonymous-namespace'";
 
 /// Splits a qualified name at its last `::` that isn't part of template
 /// arguments, returning the qualifier and the unqualified name.
-fn split_qualified_name(name: &str) -> Option<(&str, &str)> {
+pub(crate) fn split_qualified_name(name: &str) -> Option<(&str, &str)> {
     let mut depth: usize = 0;
     let mut split_position = None;
     let bytes = name.as_bytes();
@@ -1620,6 +1798,14 @@ pub struct DataFormatConfiguration {
     /// Wrap types in `namespace` blocks instead of declaring them with their
     /// qualified names.
     pub reconstruct_namespaces: bool,
+    /// Keep namespace blocks open across definitions and nest the blocks of
+    /// inner namespaces inside the blocks of enclosing ones.
+    pub unify_namespaces: bool,
+    /// Indent the contents of namespace blocks.
+    pub indent_namespaces: bool,
+    /// When types are written with their dependencies, write the types of a
+    /// namespace one after the other when their dependencies allow it.
+    pub group_namespaces: bool,
     /// Print `override` on virtual methods overriding a base class method.
     pub print_override_specifiers: bool,
     /// Don't print `virtual` on methods printed with `override`.
@@ -1636,6 +1822,8 @@ pub struct DataFormatConfiguration {
     pub compact_output: bool,
     pub print_offset_info: bool,
     pub print_brackets_new_line: bool,
+    /// Print where types are defined (source file and line) when known.
+    pub print_source_locations: bool,
 }
 
 impl Default for DataFormatConfiguration {
@@ -1647,6 +1835,9 @@ impl Default for DataFormatConfiguration {
             ignore_compiler_generated_methods: true,
             preserve_member_order: true,
             reconstruct_namespaces: true,
+            unify_namespaces: false,
+            indent_namespaces: false,
+            group_namespaces: false,
             print_override_specifiers: true,
             omit_virtual_on_overrides: false,
             print_method_rvas: true,
@@ -1657,6 +1848,7 @@ impl Default for DataFormatConfiguration {
             compact_output: false,
             print_offset_info: true,
             print_brackets_new_line: false,
+            print_source_locations: false,
         }
     }
 }
@@ -1674,6 +1866,21 @@ impl DataFormatConfiguration {
             Ok(())
         } else {
             writeln!(f, "{}", self.indent())
+        }
+    }
+
+    /// Writes the comment telling where a type is defined, when requested
+    /// and known.
+    pub fn fmt_source_location(
+        &self,
+        source_location: Option<&str>,
+        f: &mut impl std::fmt::Write,
+    ) -> fmt::Result {
+        match source_location {
+            Some(source_location) if self.print_source_locations => {
+                writeln!(f, "// {source_location}")
+            }
+            _ => Ok(()),
         }
     }
 }

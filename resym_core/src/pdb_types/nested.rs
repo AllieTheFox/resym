@@ -9,10 +9,10 @@ use super::{
     enumeration::Enum,
     field::FieldAccess,
     forward_declaration::{ForwardDeclaration, ForwardDeclarationKind},
-    is_unnamed_type, resolve_complete_type_index, type_name,
+    is_unnamed_type, resolve_complete_type_index, type_name, type_source_location,
     union::Union,
     DataFormatConfiguration, MethodImplementations, NeededTypeSet, ReconstructibleTypeData,
-    TypeForwarder, TypeNameFlavor,
+    TypeForwarder, TypeNameFlavor, TypeSourceLocations,
 };
 use crate::error::Result;
 
@@ -130,6 +130,7 @@ impl<'p> NestedDeclaration<'p> {
                     )?
                     .0,
                     values: Vec::new(),
+                    source_location: None,
                 };
                 enumeration.add_fields(type_finder, data.fields, needed_types)?;
                 NestedDeclarationKind::Enum { name, enumeration }
@@ -171,6 +172,28 @@ impl<'p> NestedDeclaration<'p> {
             }
             NestedDeclarationKind::Union { union, .. } => {
                 union.assign_method_implementations(implementations, parameter_names, rvas)
+            }
+            _ => {}
+        }
+    }
+
+    /// Sets where the nested type (and the types declared inside it) is
+    /// defined.
+    pub fn assign_source_locations(
+        &mut self,
+        locations: &TypeSourceLocations,
+        type_forwarder: &TypeForwarder,
+    ) {
+        match &mut self.kind {
+            NestedDeclarationKind::Class { class, .. } => {
+                class.assign_source_locations(locations, type_forwarder)
+            }
+            NestedDeclarationKind::Union { union, .. } => {
+                union.assign_source_locations(locations, type_forwarder)
+            }
+            NestedDeclarationKind::Enum { enumeration, .. } => {
+                enumeration.source_location =
+                    type_source_location(locations, type_forwarder, enumeration.index)
             }
             _ => {}
         }

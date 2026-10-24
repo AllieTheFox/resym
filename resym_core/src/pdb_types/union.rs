@@ -6,9 +6,9 @@ use super::{
     fmt_union_fields_interleaved, fmt_union_fields_recursive,
     nested::NestedDeclaration,
     primitive_types::SizePrintFlavor,
-    resolve_complete_type_index, type_bitfield_info, type_name, type_size, DataFormatConfiguration,
-    Field, MemberKind, MemberRef, Method, MethodImplementations, NeededTypeSet,
-    ReconstructibleTypeData, TypeForwarder, TypeNameFlavor,
+    resolve_complete_type_index, type_bitfield_info, type_name, type_size, type_source_location,
+    DataFormatConfiguration, Field, MemberKind, MemberRef, Method, MethodImplementations,
+    NeededTypeSet, ReconstructibleTypeData, TypeForwarder, TypeNameFlavor, TypeSourceLocations,
 };
 use crate::error::{Result, ResymCoreError};
 
@@ -25,6 +25,8 @@ pub struct Union<'p> {
     pub members: Vec<MemberRef>,
     /// Types and typedefs declared inside the union, in PDB order
     pub nested_types: Vec<NestedDeclaration<'p>>,
+    /// Where the union is defined (`file(line)`), if known
+    pub source_location: Option<String>,
 }
 
 impl<'p> Union<'p> {
@@ -39,6 +41,7 @@ impl<'p> Union<'p> {
             static_methods: Vec::new(),
             members: Vec::new(),
             nested_types: Vec::new(),
+            source_location: None,
         }
     }
 
@@ -249,6 +252,7 @@ impl Union<'_> {
         fmt_configuration: &DataFormatConfiguration,
         f: &mut impl std::fmt::Write,
     ) -> fmt::Result {
+        fmt_configuration.fmt_source_location(self.source_location.as_deref(), f)?;
         writeln!(
             f,
             "union {}{}{{{}",
@@ -358,6 +362,18 @@ impl<'p> Union<'p> {
         }
         for nested in &mut self.nested_types {
             nested.assign_method_implementations(implementations, parameter_names, rvas);
+        }
+    }
+
+    /// Sets where the union and its nested types are defined.
+    pub(crate) fn assign_source_locations(
+        &mut self,
+        locations: &TypeSourceLocations,
+        type_forwarder: &TypeForwarder,
+    ) {
+        self.source_location = type_source_location(locations, type_forwarder, self.index);
+        for nested in &mut self.nested_types {
+            nested.assign_source_locations(locations, type_forwarder);
         }
     }
 

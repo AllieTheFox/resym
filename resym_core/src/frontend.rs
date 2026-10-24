@@ -27,6 +27,10 @@ pub enum FrontendCommand {
     ListModulesResult(Result<ModuleList>),
     ReconstructModuleResult(Result<String>),
 
+    // Source files
+    ListSourceFilesResult(Result<ModuleList>),
+    ReconstructSourceFileResult(Result<String>),
+
     // Diff
     DiffResult(Result<Diff>),
     // Xrefs

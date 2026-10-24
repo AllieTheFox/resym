@@ -12,7 +12,10 @@ use resym_core::{
     syntax_highlighting::CodeTheme,
 };
 
-use crate::{frontend::CLIFrontendController, syntax_highlighting::highlight_code};
+use crate::{
+    frontend::CLIFrontendController, resymc_options::SourceFileOptions,
+    syntax_highlighting::highlight_code,
+};
 
 /// Slot for the single PDB or for the PDB we're diffing from
 const PDB_MAIN_SLOT: PDBSlot = 0;
@@ -109,6 +112,9 @@ impl ResymcApp {
         ignore_compiler_generated_methods: bool,
         preserve_member_order: bool,
         reconstruct_namespaces: bool,
+        unify_namespaces: bool,
+        indent_namespaces: bool,
+        group_namespaces: bool,
         print_override_specifiers: bool,
         print_argument_names: bool,
         print_method_rvas: bool,
@@ -119,6 +125,7 @@ impl ResymcApp {
         print_elaborated_type_specifiers: bool,
         indentation: IndentationFlavor,
         compact_output: bool,
+        print_source_locations: bool,
         highlight_syntax: bool,
         output_file_path: Option<PathBuf>,
     ) -> Result<()> {
@@ -152,6 +159,9 @@ impl ResymcApp {
                     ignore_compiler_generated_methods,
                     preserve_member_order,
                     reconstruct_namespaces,
+                    unify_namespaces,
+                    indent_namespaces,
+                    group_namespaces,
                     print_override_specifiers,
                     print_argument_names,
                     print_method_rvas,
@@ -162,6 +172,7 @@ impl ResymcApp {
                     print_elaborated_type_specifiers,
                     indentation,
                     compact_output,
+                    print_source_locations,
                 ))?;
         } else {
             self.backend
@@ -178,6 +189,9 @@ impl ResymcApp {
                     ignore_compiler_generated_methods,
                     preserve_member_order,
                     reconstruct_namespaces,
+                    unify_namespaces,
+                    indent_namespaces,
+                    group_namespaces,
                     print_override_specifiers,
                     print_argument_names,
                     print_method_rvas,
@@ -188,6 +202,7 @@ impl ResymcApp {
                     print_elaborated_type_specifiers,
                     indentation,
                     compact_output,
+                    print_source_locations,
                 ))?;
         }
         // Wait for the backend to finish filtering types
@@ -234,6 +249,9 @@ impl ResymcApp {
         ignore_compiler_generated_methods: bool,
         preserve_member_order: bool,
         reconstruct_namespaces: bool,
+        unify_namespaces: bool,
+        indent_namespaces: bool,
+        group_namespaces: bool,
         print_override_specifiers: bool,
         print_argument_names: bool,
         print_method_rvas: bool,
@@ -244,6 +262,7 @@ impl ResymcApp {
         print_elaborated_type_specifiers: bool,
         indentation: IndentationFlavor,
         compact_output: bool,
+        print_source_locations: bool,
         highlight_syntax: bool,
         output_file_path: Option<PathBuf>,
     ) -> Result<()> {
@@ -300,6 +319,9 @@ impl ResymcApp {
             ignore_compiler_generated_methods,
             preserve_member_order,
             reconstruct_namespaces,
+            unify_namespaces,
+            indent_namespaces,
+            group_namespaces,
             print_override_specifiers,
             print_argument_names,
             print_method_rvas,
@@ -310,6 +332,7 @@ impl ResymcApp {
             print_elaborated_type_specifiers,
             indentation,
             compact_output,
+            print_source_locations,
         ))?;
         // Wait for the backend to finish
         if let FrontendCommand::DiffResult(reconstructed_type_diff_result) =
@@ -397,6 +420,247 @@ impl ResymcApp {
         }
     }
 
+    pub fn list_source_files_command(
+        &self,
+        pdb_path: PathBuf,
+        source_file_path_filter: String,
+        case_insensitive: bool,
+        use_regex: bool,
+        output_file_path: Option<PathBuf>,
+    ) -> Result<()> {
+        // Request the backend to load the PDB
+        self.backend
+            .send_command(BackendCommand::LoadPDBFromPath(PDB_MAIN_SLOT, pdb_path))?;
+        // Wait for the backend to finish loading the PDB
+        if let FrontendCommand::LoadPDBResult(result) = self.frontend_controller.rx_ui.recv()? {
+            if let Err(err) = result {
+                return Err(anyhow!("Failed to load PDB: {}", err));
+            }
+        } else {
+            return Err(anyhow!("Invalid response received from the backend?"));
+        }
+
+        // Queue a request for the backend to return the list of source files
+        self.backend.send_command(BackendCommand::ListSourceFiles(
+            PDB_MAIN_SLOT,
+            source_file_path_filter,
+            case_insensitive,
+            use_regex,
+        ))?;
+        // Wait for the backend to finish listing source files
+        if let FrontendCommand::ListSourceFilesResult(source_file_list_result) =
+            self.frontend_controller.rx_ui.recv()?
+        {
+            // Dump output
+            let source_file_list = source_file_list_result?;
+            if let Some(output_file_path) = output_file_path {
+                let mut output_file = File::create(output_file_path)?;
+                for (source_file_path, _) in source_file_list {
+                    writeln!(output_file, "{source_file_path}")?;
+                }
+            } else {
+                for (source_file_path, _) in source_file_list {
+                    println!("{source_file_path}");
+                }
+            }
+
+            Ok(())
+        } else {
+            Err(anyhow!("Invalid response received from the backend?"))
+        }
+    }
+
+    pub fn dump_source_file_command(
+        &self,
+        pdb_path: PathBuf,
+        source_file_path: String,
+        options: &SourceFileOptions,
+        highlight_syntax: bool,
+        output_file_path: Option<PathBuf>,
+    ) -> Result<()> {
+        // Request the backend to load the PDB
+        self.backend
+            .send_command(BackendCommand::LoadPDBFromPath(PDB_MAIN_SLOT, pdb_path))?;
+        // Wait for the backend to finish loading the PDB
+        if let FrontendCommand::LoadPDBResult(result) = self.frontend_controller.rx_ui.recv()? {
+            if let Err(err) = result {
+                return Err(anyhow!("Failed to load PDB: {}", err));
+            }
+        } else {
+            return Err(anyhow!("Invalid response received from the backend?"));
+        }
+
+        // Queue a request for the backend to reconstruct the source file
+        self.backend
+            .send_command(BackendCommand::ReconstructSourceFile(
+                PDB_MAIN_SLOT,
+                source_file_path,
+                options
+                    .primitive_types_flavor
+                    .unwrap_or(crate::DEFAULT_PRIMITIVE_FLAVOR),
+                options
+                    .print_access_specifiers
+                    .unwrap_or(crate::DEFAULT_ACCESS_SPECIFIER_FLAVOR),
+                options.print_header,
+                options
+                    .size_print_flavor
+                    .unwrap_or(crate::DEFAULT_PRINT_SIZE_FLAVOR),
+                options.integers_as_hexadecimal,
+                options.print_offset_info,
+                options.print_brackets_new_line,
+                options.ignore_std_types,
+                options.ignore_compiler_generated_methods,
+                options.preserve_member_order,
+                options.reconstruct_namespaces,
+                options.unify_namespaces,
+                options.indent_namespaces,
+                options.print_override_specifiers,
+                options.print_argument_names,
+                options.print_method_rvas,
+                options.print_calling_conventions,
+                options
+                    .vftable_comment_flavor
+                    .unwrap_or(crate::DEFAULT_VFTABLE_COMMENT_FLAVOR),
+                options.hide_base_class_offsets,
+                options.omit_virtual_on_overrides,
+                options.print_elaborated_type_specifiers,
+                options.indentation.unwrap_or(crate::DEFAULT_INDENTATION),
+                options.compact_output,
+                options.print_source_locations,
+                options.print_local_variables,
+                options.print_local_variable_locations,
+                options.print_inlined_call_sites,
+            ))?;
+        // Wait for the backend to finish
+        if let FrontendCommand::ReconstructSourceFileResult(reconstructed_source_file) =
+            self.frontend_controller.rx_ui.recv()?
+        {
+            let reconstructed_source_file = reconstructed_source_file?;
+            // Dump output
+            if let Some(output_file_path) = output_file_path {
+                let mut output_file = File::create(output_file_path)?;
+                output_file.write_all(reconstructed_source_file.as_bytes())?;
+            } else if highlight_syntax {
+                let theme = CodeTheme::default();
+                if let Some(colorized_reconstructed_source_file) =
+                    highlight_code(&theme, &reconstructed_source_file, None)
+                {
+                    println!("{colorized_reconstructed_source_file}");
+                }
+            } else {
+                println!("{reconstructed_source_file}");
+            }
+            Ok(())
+        } else {
+            Err(anyhow!("Invalid response received from the backend?"))
+        }
+    }
+
+    pub fn diff_source_file_command(
+        &self,
+        from_pdb_path: PathBuf,
+        to_pdb_path: PathBuf,
+        source_file_path: String,
+        options: &SourceFileOptions,
+        highlight_syntax: bool,
+        output_file_path: Option<PathBuf>,
+    ) -> Result<()> {
+        // Request the backend to load both PDBs
+        for (pdb_slot, pdb_path) in [
+            (PDB_MAIN_SLOT, from_pdb_path),
+            (PDB_DIFF_TO_SLOT, to_pdb_path),
+        ] {
+            self.backend
+                .send_command(BackendCommand::LoadPDBFromPath(pdb_slot, pdb_path.clone()))?;
+            // Wait for the backend to finish loading the PDB
+            if let FrontendCommand::LoadPDBResult(result) = self.frontend_controller.rx_ui.recv()? {
+                if let Err(err) = result {
+                    return Err(anyhow!(
+                        "Failed to load PDB '{}': {}",
+                        pdb_path.display(),
+                        err
+                    ));
+                }
+            } else {
+                return Err(anyhow!("Invalid response received from the backend?"));
+            }
+        }
+
+        // Queue a request for the backend to diff the source file
+        self.backend
+            .send_command(BackendCommand::DiffSourceFileByPath(
+                PDB_MAIN_SLOT,
+                PDB_DIFF_TO_SLOT,
+                source_file_path,
+                options
+                    .primitive_types_flavor
+                    .unwrap_or(crate::DEFAULT_PRIMITIVE_FLAVOR),
+                options
+                    .print_access_specifiers
+                    .unwrap_or(crate::DEFAULT_ACCESS_SPECIFIER_FLAVOR),
+                options.print_header,
+                options
+                    .size_print_flavor
+                    .unwrap_or(crate::DEFAULT_PRINT_SIZE_FLAVOR),
+                options.integers_as_hexadecimal,
+                options.print_offset_info,
+                options.print_brackets_new_line,
+                options.ignore_std_types,
+                options.ignore_compiler_generated_methods,
+                options.preserve_member_order,
+                options.reconstruct_namespaces,
+                options.unify_namespaces,
+                options.indent_namespaces,
+                options.print_override_specifiers,
+                options.print_argument_names,
+                options.print_method_rvas,
+                options.print_calling_conventions,
+                options
+                    .vftable_comment_flavor
+                    .unwrap_or(crate::DEFAULT_VFTABLE_COMMENT_FLAVOR),
+                options.hide_base_class_offsets,
+                options.omit_virtual_on_overrides,
+                options.print_elaborated_type_specifiers,
+                options.indentation.unwrap_or(crate::DEFAULT_INDENTATION),
+                options.compact_output,
+                options.print_source_locations,
+                options.print_local_variables,
+                options.print_local_variable_locations,
+                options.print_inlined_call_sites,
+            ))?;
+        // Wait for the backend to finish
+        if let FrontendCommand::DiffResult(reconstructed_source_file_diff_result) =
+            self.frontend_controller.rx_ui.recv()?
+        {
+            let reconstructed_source_file_diff = reconstructed_source_file_diff_result?;
+            // Dump output
+            if let Some(output_file_path) = output_file_path {
+                let mut output_file = File::create(output_file_path)?;
+                output_file.write_all(reconstructed_source_file_diff.data.as_bytes())?;
+            } else if highlight_syntax {
+                let theme = CodeTheme::default();
+                let line_descriptions = reconstructed_source_file_diff
+                    .metadata
+                    .iter()
+                    .map(|e| e.1)
+                    .collect();
+                if let Some(colorized_reconstructed_source_file) = highlight_code(
+                    &theme,
+                    &reconstructed_source_file_diff.data,
+                    Some(line_descriptions),
+                ) {
+                    println!("{colorized_reconstructed_source_file}");
+                }
+            } else {
+                println!("{}", reconstructed_source_file_diff.data);
+            }
+
+            Ok(())
+        } else {
+            Err(anyhow!("Invalid response received from the backend?"))
+        }
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn dump_module_command(
         &self,
@@ -409,6 +673,7 @@ impl ResymcApp {
         print_local_variable_locations: bool,
         print_inlined_call_sites: bool,
         indentation: IndentationFlavor,
+        print_source_locations: bool,
         highlight_syntax: bool,
         output_file_path: Option<PathBuf>,
     ) -> Result<()> {
@@ -436,6 +701,7 @@ impl ResymcApp {
                 print_local_variable_locations,
                 print_inlined_call_sites,
                 indentation,
+                print_source_locations,
             ))?;
         // Wait for the backend to finish filtering types
         if let FrontendCommand::ReconstructModuleResult(reconstructed_module) =
@@ -475,6 +741,7 @@ impl ResymcApp {
         print_local_variable_locations: bool,
         print_inlined_call_sites: bool,
         indentation: IndentationFlavor,
+        print_source_locations: bool,
         highlight_syntax: bool,
         output_file_path: Option<PathBuf>,
     ) -> Result<()> {
@@ -526,6 +793,7 @@ impl ResymcApp {
             print_local_variable_locations,
             print_inlined_call_sites,
             indentation,
+            print_source_locations,
         ))?;
         // Wait for the backend to finish
         if let FrontendCommand::DiffResult(reconstructed_module_diff_result) =
@@ -633,6 +901,7 @@ impl ResymcApp {
         print_inlined_call_sites: bool,
         print_dependencies: bool,
         indentation: IndentationFlavor,
+        print_source_locations: bool,
         highlight_syntax: bool,
         output_file_path: Option<PathBuf>,
     ) -> Result<()> {
@@ -677,12 +946,16 @@ impl ResymcApp {
                     false,
                     false,
                     false,
+                    false,
+                    false,
+                    false,
                     crate::DEFAULT_VFTABLE_COMMENT_FLAVOR,
                     false,
                     false,
                     false,
                     indentation,
                     false,
+                    print_source_locations,
                 ))?;
         } else {
             self.backend
@@ -695,6 +968,7 @@ impl ResymcApp {
                     print_local_variable_locations,
                     print_inlined_call_sites,
                     indentation,
+                    print_source_locations,
                 ))?;
         }
         // Wait for the backend to finish filtering types
@@ -738,6 +1012,7 @@ impl ResymcApp {
         print_inlined_call_sites: bool,
         print_dependencies: bool,
         indentation: IndentationFlavor,
+        print_source_locations: bool,
         highlight_syntax: bool,
         output_file_path: Option<PathBuf>,
     ) -> Result<()> {
@@ -807,12 +1082,16 @@ impl ResymcApp {
             false,
             false,
             false,
+            false,
+            false,
+            false,
             crate::DEFAULT_VFTABLE_COMMENT_FLAVOR,
             false,
             false,
             false,
             indentation,
             false,
+            print_source_locations,
         ))?;
         // Wait for the backend to finish
         if let FrontendCommand::DiffResult(reconstructed_symbol_diff_result) =
@@ -955,6 +1234,9 @@ mod tests {
                 false, // ignore_compiler_generated_methods
                 false, // preserve_member_order
                 false, // reconstruct_namespaces
+                false, // unify_namespaces
+                false, // indent_namespaces
+                false, // group_namespaces
                 false, // print_override_specifiers
                 false, // print_argument_names
                 false, // print_method_rvas
@@ -965,6 +1247,7 @@ mod tests {
                 false, // print_elaborated_type_specifiers
                 IndentationFlavor::TwoSpaces,
                 false, // compact_output
+                false, // print_source_locations
                 false, // highlight_syntax
                 None
             )
@@ -993,6 +1276,9 @@ mod tests {
                 true,  // ignore_compiler_generated_methods
                 true,  // preserve_member_order
                 true,  // reconstruct_namespaces
+                true,  // unify_namespaces
+                true,  // indent_namespaces
+                true,  // group_namespaces
                 true,  // print_override_specifiers
                 true,  // print_argument_names
                 true,  // print_method_rvas
@@ -1002,8 +1288,9 @@ mod tests {
                 true, // omit_virtual_on_overrides
                 true, // print_elaborated_type_specifiers
                 IndentationFlavor::Tab,
-                true, // compact_output
-                true, // highlight_syntax
+                true,  // compact_output
+                false, // print_source_locations
+                true,  // highlight_syntax
                 None
             )
             .is_ok());
@@ -1034,6 +1321,9 @@ mod tests {
                 false, // ignore_compiler_generated_methods
                 false, // preserve_member_order
                 false, // reconstruct_namespaces
+                false, // unify_namespaces
+                false, // indent_namespaces
+                false, // group_namespaces
                 false, // print_override_specifiers
                 false, // print_argument_names
                 false, // print_method_rvas
@@ -1044,6 +1334,7 @@ mod tests {
                 false, // print_elaborated_type_specifiers
                 IndentationFlavor::TwoSpaces,
                 false, // compact_output
+                false, // print_source_locations
                 false, // highlight_syntax
                 Some(output_path.clone()),
             )
@@ -1098,6 +1389,9 @@ mod tests {
                 false, // ignore_compiler_generated_methods
                 false, // preserve_member_order
                 false, // reconstruct_namespaces
+                false, // unify_namespaces
+                false, // indent_namespaces
+                false, // group_namespaces
                 false, // print_override_specifiers
                 false, // print_argument_names
                 false, // print_method_rvas
@@ -1108,6 +1402,7 @@ mod tests {
                 false, // print_elaborated_type_specifiers
                 IndentationFlavor::TwoSpaces,
                 false, // compact_output
+                false, // print_source_locations
                 false, // highlight_syntax
                 None   // output_file_path
             )
@@ -1137,6 +1432,9 @@ mod tests {
                 false, // ignore_compiler_generated_methods
                 true,  // preserve_member_order
                 true,  // reconstruct_namespaces
+                true,  // unify_namespaces
+                true,  // indent_namespaces
+                true,  // group_namespaces
                 true,  // print_override_specifiers
                 true,  // print_argument_names
                 true,  // print_method_rvas
@@ -1146,9 +1444,10 @@ mod tests {
                 true, // omit_virtual_on_overrides
                 true, // print_elaborated_type_specifiers
                 IndentationFlavor::Tab,
-                true, // compact_output
-                true, // highlight_syntax
-                None  // output_file_path
+                true,  // compact_output
+                false, // print_source_locations
+                true,  // highlight_syntax
+                None   // output_file_path
             )
             .is_ok());
     }
@@ -1181,6 +1480,9 @@ mod tests {
                 false, // ignore_compiler_generated_methods
                 false, // preserve_member_order
                 false, // reconstruct_namespaces
+                false, // unify_namespaces
+                false, // indent_namespaces
+                false, // group_namespaces
                 false, // print_override_specifiers
                 false, // print_argument_names
                 false, // print_method_rvas
@@ -1191,6 +1493,7 @@ mod tests {
                 false, // print_elaborated_type_specifiers
                 IndentationFlavor::TwoSpaces,
                 false, // compact_output
+                false, // print_source_locations
                 false, // highlight_syntax
                 Some(output_path.clone()),
             )
@@ -1280,6 +1583,7 @@ mod tests {
                 false,
                 IndentationFlavor::TwoSpaces,
                 false,
+                false,
                 None
             )
             .is_err());
@@ -1301,6 +1605,7 @@ mod tests {
                 false,
                 false,
                 IndentationFlavor::TwoSpaces,
+                false,
                 true,
                 None
             )
@@ -1326,6 +1631,7 @@ mod tests {
                 false,
                 false,
                 IndentationFlavor::TwoSpaces,
+                false,
                 false,
                 Some(output_path.clone()),
             )
@@ -1367,6 +1673,7 @@ mod tests {
                 false,
                 IndentationFlavor::TwoSpaces,
                 false,
+                false,
                 None
             )
             .is_err());
@@ -1391,6 +1698,7 @@ mod tests {
                 false,
                 false,
                 IndentationFlavor::TwoSpaces,
+                false,
                 true,
                 None
             )
@@ -1420,6 +1728,7 @@ mod tests {
                 false,
                 false,
                 IndentationFlavor::TwoSpaces,
+                false,
                 false,
                 Some(output_path.clone()),
             )
@@ -1510,6 +1819,7 @@ mod tests {
                 false,
                 IndentationFlavor::TwoSpaces,
                 false,
+                false,
                 None
             )
             .is_err());
@@ -1532,6 +1842,7 @@ mod tests {
                 false,
                 false,
                 IndentationFlavor::TwoSpaces,
+                false,
                 true,
                 None
             )
@@ -1558,6 +1869,7 @@ mod tests {
                 false,
                 false,
                 IndentationFlavor::TwoSpaces,
+                false,
                 false,
                 Some(output_path.clone()),
             )
@@ -1593,6 +1905,7 @@ mod tests {
                 false,
                 IndentationFlavor::TwoSpaces,
                 false,
+                false,
                 None
             )
             .is_err());
@@ -1618,6 +1931,7 @@ mod tests {
                 false,
                 false,
                 IndentationFlavor::TwoSpaces,
+                false,
                 true,
                 None
             )
@@ -1648,6 +1962,7 @@ mod tests {
                 false,
                 false,
                 IndentationFlavor::TwoSpaces,
+                false,
                 false,
                 Some(output_path.clone()),
             )

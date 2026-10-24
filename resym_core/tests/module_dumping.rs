@@ -24,6 +24,7 @@ fn test_module_dumping_by_path_portable() {
             false,
             false,
             IndentationFlavor::TwoSpaces,
+            false,
         )
         .unwrap_or_else(|err| panic!("module dumping failed: {err}"));
 
@@ -87,6 +88,7 @@ fn test_module_dumping_by_index_internal(
             false,
             false,
             IndentationFlavor::TwoSpaces,
+            false,
         )
         .unwrap_or_else(|_| panic!("module dumping"));
 

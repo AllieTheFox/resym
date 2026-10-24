@@ -178,6 +178,17 @@ fn tab_ui(ui: &mut egui::Ui, tab: SettingsTab, settings: &mut ResymAppSettings) 
                 &mut settings.reconstruct_namespaces,
                 "Reconstruct namespaces",
             );
+            // Only applies when namespaces are reconstructed
+            ui.indent("unify_namespaces", |ui| {
+                ui.add_enabled_ui(settings.reconstruct_namespaces, |ui| {
+                    ui.checkbox(&mut settings.unify_namespaces, "Unify namespace blocks");
+                    ui.checkbox(&mut settings.indent_namespaces, "Indent namespace contents");
+                    ui.checkbox(
+                        &mut settings.group_namespaces,
+                        "Group types by namespace (with referenced types)",
+                    );
+                });
+            });
             ui.checkbox(
                 &mut settings.print_elaborated_type_specifiers,
                 "Print struct/class/union/enum before type names",
@@ -283,6 +294,10 @@ fn tab_ui(ui: &mut egui::Ui, tab: SettingsTab, settings: &mut ResymAppSettings) 
             ui.checkbox(
                 &mut settings.compact_output,
                 "Compact output (no blank lines between members)",
+            );
+            ui.checkbox(
+                &mut settings.print_source_locations,
+                "Print source file and line of definitions",
             );
         }
     }

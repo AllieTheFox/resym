@@ -9,6 +9,8 @@ pub struct Enum<'p> {
     pub name: String,
     pub underlying_type_name: String,
     pub values: Vec<EnumValue<'p>>,
+    /// Where the enum is defined (`file(line)`), if known
+    pub source_location: Option<String>,
 }
 
 impl<'p> Enum<'p> {
@@ -76,6 +78,7 @@ impl Enum<'_> {
         fmt_configuration: &DataFormatConfiguration,
         f: &mut impl std::fmt::Write,
     ) -> fmt::Result {
+        fmt_configuration.fmt_source_location(self.source_location.as_deref(), f)?;
         writeln!(
             f,
             "enum {} : {}{}{{",
