@@ -43,6 +43,9 @@ pub enum ResymcOptions {
         /// Representation of primitive types
         #[structopt(short = "f", long)]
         primitive_types_flavor: Option<PrimitiveReconstructionFlavor>,
+        /// Write tags and handles with their typedef name (e.g., `GUID`, `HWND`)
+        #[structopt(long)]
+        use_typedef_names: bool,
         /// Print header
         #[structopt(short = "h", long)]
         print_header: bool,
@@ -131,6 +134,9 @@ pub enum ResymcOptions {
         /// Representation of primitive types
         #[structopt(short = "f", long)]
         primitive_types_flavor: Option<PrimitiveReconstructionFlavor>,
+        /// Write tags and handles with their typedef name (e.g., `GUID`, `HWND`)
+        #[structopt(long)]
+        use_typedef_names: bool,
         /// Print header
         #[structopt(short = "h", long)]
         print_header: bool,
@@ -220,6 +226,9 @@ pub enum ResymcOptions {
         /// Representation of primitive types
         #[structopt(short = "f", long)]
         primitive_types_flavor: Option<PrimitiveReconstructionFlavor>,
+        /// Write tags and handles with their typedef name (e.g., `GUID`, `HWND`)
+        #[structopt(long)]
+        use_typedef_names: bool,
         /// Print header
         #[structopt(short = "h", long)]
         print_header: bool,
@@ -325,6 +334,9 @@ pub enum ResymcOptions {
         /// Representation of primitive types
         #[structopt(short = "f", long)]
         primitive_types_flavor: Option<PrimitiveReconstructionFlavor>,
+        /// Write tags and handles with their typedef name (e.g., `GUID`, `HWND`)
+        #[structopt(long)]
+        use_typedef_names: bool,
         /// Print header
         #[structopt(short = "h", long)]
         print_header: bool,
@@ -363,6 +375,9 @@ pub enum ResymcOptions {
         /// Representation of primitive types
         #[structopt(short = "f", long)]
         primitive_types_flavor: Option<PrimitiveReconstructionFlavor>,
+        /// Write tags and handles with their typedef name (e.g., `GUID`, `HWND`)
+        #[structopt(long)]
+        use_typedef_names: bool,
         /// Print header
         #[structopt(short = "h", long)]
         print_header: bool,
@@ -417,6 +432,9 @@ pub enum ResymcOptions {
         /// Representation of primitive types
         #[structopt(short = "f", long)]
         primitive_types_flavor: Option<PrimitiveReconstructionFlavor>,
+        /// Write tags and handles with their typedef name (e.g., `GUID`, `HWND`)
+        #[structopt(long)]
+        use_typedef_names: bool,
         /// Print header
         #[structopt(short = "h", long)]
         print_header: bool,
@@ -455,6 +473,9 @@ pub enum ResymcOptions {
         /// Representation of primitive types
         #[structopt(short = "f", long)]
         primitive_types_flavor: Option<PrimitiveReconstructionFlavor>,
+        /// Write tags and handles with their typedef name (e.g., `GUID`, `HWND`)
+        #[structopt(long)]
+        use_typedef_names: bool,
         /// Print header
         #[structopt(short = "h", long)]
         print_header: bool,
@@ -493,6 +514,9 @@ pub enum ResymcOptions {
         /// Representation of primitive types
         #[structopt(short = "f", long)]
         primitive_types_flavor: Option<PrimitiveReconstructionFlavor>,
+        /// Write tags and handles with their typedef name (e.g., `GUID`, `HWND`)
+        #[structopt(long)]
+        use_typedef_names: bool,
         /// Print header
         #[structopt(short = "h", long)]
         print_header: bool,
@@ -576,6 +600,9 @@ pub struct SourceFileOptions {
     /// Representation of primitive types
     #[structopt(short = "f", long)]
     pub primitive_types_flavor: Option<PrimitiveReconstructionFlavor>,
+    /// Write tags and handles with their typedef name (e.g., `GUID`, `HWND`)
+    #[structopt(long)]
+    pub use_typedef_names: bool,
     /// Print header
     #[structopt(short = "h", long)]
     pub print_header: bool,

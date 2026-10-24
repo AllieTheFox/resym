@@ -32,6 +32,7 @@ fn test_struct_diffing() {
             &pdb_file_to,
             test_case_type_name,
             PrimitiveReconstructionFlavor::Portable,
+            false,
             AccessSpecifierReconstructionFlavor::Disabled,
             SizePrintFlavor::Comment,
             false, // print_header
@@ -75,6 +76,7 @@ fn test_struct_diffing_inexistent_type() {
         &pdb_file_to,
         INEXISTENT_TYPE_NAME,
         PrimitiveReconstructionFlavor::Portable,
+        false,
         AccessSpecifierReconstructionFlavor::Always,
         SizePrintFlavor::Comment,
         false, // print_header

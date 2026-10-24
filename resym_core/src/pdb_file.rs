@@ -28,7 +28,7 @@ use crate::{
         self, is_unnamed_type, type_name, AccessSpecifierReconstructionFlavor,
         DataFormatConfiguration, IndentationFlavor, MethodImplementation, MethodImplementations,
         PrimitiveReconstructionFlavor, SizePrintFlavor, TypeNameFlavor, TypeSourceLocations,
-        VftableCommentFlavor,
+        TypedefNames, VftableCommentFlavor,
     },
 };
 
@@ -150,6 +150,9 @@ where
     string_table: OnceLock<Option<pdb::StringTable<'p>>>,
     /// Source files and what they define, read on first use
     source_files: OnceLock<Vec<SourceFile>>,
+    /// Typedef names of tags and handles, read from the global symbols on
+    /// first use
+    typedef_names: OnceLock<TypedefNames>,
     pdb: RwLock<pdb::PDB<'p, T>>,
 }
 
@@ -184,6 +187,7 @@ impl<'p> PdbFile<'p, File> {
             type_source_locations: OnceLock::new(),
             string_table: OnceLock::new(),
             source_files: OnceLock::new(),
+            typedef_names: OnceLock::new(),
             pdb: pdb.into(),
         };
         pdb_file.load_symbols()?;
@@ -225,6 +229,7 @@ impl<'p> PdbFile<'p, PDBDataSource> {
             type_source_locations: OnceLock::new(),
             string_table: OnceLock::new(),
             source_files: OnceLock::new(),
+            typedef_names: OnceLock::new(),
             pdb: pdb.into(),
         };
         pdb_file.load_symbols()?;
@@ -264,6 +269,7 @@ impl<'p> PdbFile<'p, PDBDataSource> {
             type_source_locations: OnceLock::new(),
             string_table: OnceLock::new(),
             source_files: OnceLock::new(),
+            typedef_names: OnceLock::new(),
             pdb: pdb.into(),
         };
         pdb_file.load_symbols()?;
@@ -370,6 +376,7 @@ where
         &self,
         type_name: &str,
         primitives_flavor: PrimitiveReconstructionFlavor,
+        use_typedef_names: bool,
         print_access_specifiers: AccessSpecifierReconstructionFlavor,
         size_print_flavor: SizePrintFlavor,
         reconstruct_dependencies: bool,
@@ -480,6 +487,7 @@ where
                 &type_finder,
                 type_index,
                 primitives_flavor,
+                use_typedef_names,
                 print_access_specifiers,
                 size_print_flavor,
                 reconstruct_dependencies,
@@ -512,6 +520,7 @@ where
         &self,
         type_index: TypeIndex,
         primitives_flavor: PrimitiveReconstructionFlavor,
+        use_typedef_names: bool,
         print_access_specifiers: AccessSpecifierReconstructionFlavor,
         size_print_flavor: SizePrintFlavor,
         reconstruct_dependencies: bool,
@@ -550,6 +559,7 @@ where
             &type_finder,
             type_index,
             primitives_flavor,
+            use_typedef_names,
             print_access_specifiers,
             size_print_flavor,
             reconstruct_dependencies,
@@ -680,6 +690,7 @@ where
         &self,
         source_file_path: &str,
         primitives_flavor: PrimitiveReconstructionFlavor,
+        use_typedef_names: bool,
         print_access_specifiers: AccessSpecifierReconstructionFlavor,
         size_print_flavor: SizePrintFlavor,
         integers_as_hexadecimal: bool,
@@ -742,6 +753,7 @@ where
         let type_name_flavor = TypeNameFlavor {
             primitives: primitives_flavor,
             elaborated_type_specifiers: print_elaborated_type_specifiers,
+            typedef_names: use_typedef_names.then(|| self.typedef_names(&type_finder)),
         };
         // Definitions, by line
         let mut definitions: Vec<(u32, SourceFileDefinition)> = Vec::new();
@@ -837,6 +849,7 @@ where
                     (module_index, symbol_offset),
                     &symbol,
                     primitives_flavor,
+                    use_typedef_names,
                     print_access_specifiers,
                     local_variable_format.as_ref(),
                     &mut needed_types,
@@ -929,6 +942,9 @@ where
         if fmt_configuration.print_source_locations {
             type_data.assign_source_locations(source_locations, &self.forwarder_to_complete_type);
         }
+        if let Some(typedef_names) = type_name_flavor.typedef_names {
+            type_data.assign_typedef_names(typedef_names);
+        }
         // Types are written from the deepest to the shallowest: the first type
         // is the deepest
         let type_order: BTreeMap<usize, Vec<pdb::TypeIndex>> = types
@@ -947,6 +963,7 @@ where
         &self,
         symbol_index: SymbolIndex,
         primitives_flavor: PrimitiveReconstructionFlavor,
+        use_typedef_names: bool,
         print_access_specifiers: AccessSpecifierReconstructionFlavor,
         print_local_variables: bool,
         print_local_variable_locations: bool,
@@ -1000,6 +1017,7 @@ where
                         symbol_index,
                         &symbol,
                         primitives_flavor,
+                        use_typedef_names,
                         print_access_specifiers,
                         local_variable_format.as_ref(),
                         &mut needed_types,
@@ -1029,6 +1047,7 @@ where
                             symbol_index,
                             &symbol,
                             primitives_flavor,
+                            use_typedef_names,
                             print_access_specifiers,
                             local_variable_format.as_ref(),
                             &mut needed_types,
@@ -1075,6 +1094,7 @@ where
             &TypeNameFlavor {
                 primitives: primitives_flavor,
                 elaborated_type_specifiers: print_elaborated_type_specifiers,
+                typedef_names: use_typedef_names.then(|| self.typedef_names(&type_finder)),
             },
             ignore_std_types,
             print_argument_names,
@@ -1087,6 +1107,7 @@ where
         &self,
         symbol_name: &str,
         primitives_flavor: PrimitiveReconstructionFlavor,
+        use_typedef_names: bool,
         print_access_specifiers: AccessSpecifierReconstructionFlavor,
         print_local_variables: bool,
         print_local_variable_locations: bool,
@@ -1146,6 +1167,7 @@ where
                         (GLOBAL_MODULE_INDEX, symbol.index().0),
                         &symbol,
                         primitives_flavor,
+                        use_typedef_names,
                         print_access_specifiers,
                         local_variable_format.as_ref(),
                         &mut needed_types,
@@ -1183,6 +1205,7 @@ where
                                     (module_id, symbol.index().0),
                                     &symbol,
                                     primitives_flavor,
+                                    use_typedef_names,
                                     print_access_specifiers,
                                     local_variable_format.as_ref(),
                                     &mut needed_types,
@@ -1207,6 +1230,7 @@ where
                     (GLOBAL_MODULE_INDEX, symbol.index().0),
                     &symbol,
                     primitives_flavor,
+                    use_typedef_names,
                     print_access_specifiers,
                     local_variable_format.as_ref(),
                     &mut needed_types,
@@ -1250,6 +1274,7 @@ where
             &TypeNameFlavor {
                 primitives: primitives_flavor,
                 elaborated_type_specifiers: print_elaborated_type_specifiers,
+                typedef_names: use_typedef_names.then(|| self.typedef_names(&type_finder)),
             },
             ignore_std_types,
             print_argument_names,
@@ -1261,6 +1286,7 @@ where
     pub fn reconstruct_all_symbols(
         &self,
         primitives_flavor: PrimitiveReconstructionFlavor,
+        use_typedef_names: bool,
         print_access_specifiers: AccessSpecifierReconstructionFlavor,
         print_local_variables: bool,
         print_local_variable_locations: bool,
@@ -1294,6 +1320,7 @@ where
                         (GLOBAL_MODULE_INDEX, symbol.index().0),
                         &symbol,
                         primitives_flavor,
+                        use_typedef_names,
                         print_access_specifiers,
                         local_variable_format.as_ref(),
                         &mut needed_types,
@@ -1330,6 +1357,7 @@ where
                                     (module_id, symbol.index().0),
                                     &symbol,
                                     primitives_flavor,
+                                    use_typedef_names,
                                     print_access_specifiers,
                                     local_variable_format.as_ref(),
                                     &mut needed_types,
@@ -1356,6 +1384,7 @@ where
         &self,
         module_path: &str,
         primitives_flavor: PrimitiveReconstructionFlavor,
+        use_typedef_names: bool,
         print_access_specifiers: AccessSpecifierReconstructionFlavor,
         print_local_variables: bool,
         print_local_variable_locations: bool,
@@ -1375,6 +1404,7 @@ where
             Some(module_index) => self.reconstruct_module_by_index(
                 module_index,
                 primitives_flavor,
+                use_typedef_names,
                 print_access_specifiers,
                 print_local_variables,
                 print_local_variable_locations,
@@ -1390,6 +1420,7 @@ where
         &self,
         module_index: usize,
         primitives_flavor: PrimitiveReconstructionFlavor,
+        use_typedef_names: bool,
         print_access_specifiers: AccessSpecifierReconstructionFlavor,
         print_local_variables: bool,
         print_local_variable_locations: bool,
@@ -1435,6 +1466,7 @@ where
                 (module_index, symbol.index().0),
                 &symbol,
                 primitives_flavor,
+                use_typedef_names,
                 print_access_specifiers,
                 local_variable_format.as_ref(),
                 &mut needed_types,
@@ -1534,6 +1566,7 @@ where
         type_finder: &pdb::TypeFinder,
         type_index: TypeIndex,
         primitives_flavor: PrimitiveReconstructionFlavor,
+        use_typedef_names: bool,
         print_access_specifiers: AccessSpecifierReconstructionFlavor,
         size_print_flavor: SizePrintFlavor,
         reconstruct_dependencies: bool,
@@ -1584,6 +1617,7 @@ where
         let type_name_flavor = TypeNameFlavor {
             primitives: primitives_flavor,
             elaborated_type_specifiers: print_elaborated_type_specifiers,
+            typedef_names: use_typedef_names.then(|| self.typedef_names(type_finder)),
         };
         self.reconstruct_types(
             type_finder,
@@ -1643,6 +1677,9 @@ where
                 print_method_rvas,
             )?;
             self.assign_source_locations(&mut type_data, fmt_configuration);
+            if let Some(typedef_names) = type_name_flavor.typedef_names {
+                type_data.assign_typedef_names(typedef_names);
+            }
             let mut reconstruction_output = String::new();
             type_data.reconstruct(
                 fmt_configuration,
@@ -1752,6 +1789,9 @@ where
             print_method_rvas,
         )?;
         self.assign_source_locations(&mut type_data, fmt_configuration);
+        if let Some(typedef_names) = type_name_flavor.typedef_names {
+            type_data.assign_typedef_names(typedef_names);
+        }
         let mut reconstruction_output = String::new();
         type_data.reconstruct(
             fmt_configuration,
@@ -1765,6 +1805,7 @@ where
     pub fn reconstruct_all_types(
         &self,
         primitives_flavor: PrimitiveReconstructionFlavor,
+        use_typedef_names: bool,
         print_access_specifiers: AccessSpecifierReconstructionFlavor,
         size_print_flavor: SizePrintFlavor,
         integers_as_hexadecimal: bool,
@@ -1789,21 +1830,16 @@ where
         compact_output: bool,
         print_source_locations: bool,
     ) -> Result<String> {
+        let type_finder = self.type_finder()?;
         let type_name_flavor = TypeNameFlavor {
             primitives: primitives_flavor,
             elaborated_type_specifiers: print_elaborated_type_specifiers,
+            typedef_names: use_typedef_names.then(|| self.typedef_names(&type_finder)),
         };
         let mut type_data = pdb_types::Data::new(ignore_std_types);
         let mut processed_types = Vec::new();
         let mut type_dependency_map: HashMap<TypeIndex, Vec<(TypeIndex, bool)>> = HashMap::new();
         {
-            let mut type_finder = self.type_information.finder();
-            // Populate our `TypeFinder`
-            let mut type_iter = self.type_information.iter();
-            while (type_iter.next()?).is_some() {
-                type_finder.update(&type_iter);
-            }
-
             // Add the requested types
             let mut type_iter = self.type_information.iter();
             while let Some(item) = type_iter.next()? {
@@ -1868,6 +1904,9 @@ where
                     self.type_source_locations(),
                     &self.forwarder_to_complete_type,
                 );
+            }
+            if let Some(typedef_names) = type_name_flavor.typedef_names {
+                type_data.assign_typedef_names(typedef_names);
             }
         }
 
@@ -2017,6 +2056,60 @@ where
                 &self.forwarder_to_complete_type,
             );
         }
+    }
+
+    /// Returns the typedef names of tags (`_GUID` → `GUID`) and handles
+    /// (`HDC__*` → `HDC`), read from the global `S_UDT` symbols the first
+    /// time. Only names following the Windows headers' conventions are kept,
+    /// as a type can have several typedefs (`GUID`, `IID` and `CLSID` all
+    /// name `_GUID`) and the PDB doesn't tell which one was used where.
+    fn typedef_names(&self, type_finder: &pdb::TypeFinder) -> &TypedefNames {
+        self.typedef_names.get_or_init(|| {
+            let start = Instant::now();
+            let mut typedef_names = TypedefNames::default();
+            let mut symbol_table = self.global_symbols.iter();
+            while let Ok(Some(symbol)) = symbol_table.next() {
+                let Ok(pdb::SymbolData::UserDefinedType(udt)) = symbol.parse() else {
+                    continue;
+                };
+                let typedef_name = udt.name.to_string();
+                let Ok(type_data) = type_finder.find(udt.type_index).and_then(|t| t.parse()) else {
+                    continue;
+                };
+                let tag_name = match type_data {
+                    pdb::TypeData::Class(data) => data.name,
+                    pdb::TypeData::Union(data) => data.name,
+                    pdb::TypeData::Enumeration(data) => data.name,
+                    pdb::TypeData::Pointer(data) => {
+                        if let Some(tag_name) = pdb_types::handle_tag_name(type_finder, &data) {
+                            if tag_name.strip_suffix("__") == Some(typedef_name.as_ref()) {
+                                typedef_names
+                                    .handles
+                                    .insert(tag_name, typedef_name.into_owned());
+                            }
+                        }
+                        continue;
+                    }
+                    _ => continue,
+                };
+                let tag_name = tag_name.to_string();
+                let conventional_name = tag_name
+                    .strip_prefix("tag")
+                    .or_else(|| tag_name.strip_prefix('_'));
+                if conventional_name == Some(typedef_name.as_ref()) {
+                    typedef_names
+                        .tags
+                        .insert(tag_name.into_owned(), typedef_name.into_owned());
+                }
+            }
+            log::debug!(
+                "Typedef names loaded in {} ms ({} tags, {} handles)",
+                start.elapsed().as_millis(),
+                typedef_names.tags.len(),
+                typedef_names.handles.len()
+            );
+            typedef_names
+        })
     }
 
     /// Returns where the types of this PDB are defined (`file(line)`), read
@@ -2252,11 +2345,15 @@ where
         symbol_index: SymbolIndex,
         symbol: &pdb::Symbol<'_>,
         primitives_flavor: PrimitiveReconstructionFlavor,
+        use_typedef_names: bool,
         print_access_specifiers: AccessSpecifierReconstructionFlavor,
         local_variable_format: Option<&LocalVariableFormat<'_>>,
         needed_types: &mut pdb_types::NeededTypeSet,
     ) -> Option<String> {
-        let type_name_flavor = TypeNameFlavor::new(primitives_flavor);
+        let type_name_flavor = TypeNameFlavor {
+            typedef_names: use_typedef_names.then(|| self.typedef_names(type_finder)),
+            ..TypeNameFlavor::new(primitives_flavor)
+        };
         match symbol.parse().ok()? {
             pdb::SymbolData::UserDefinedType(udt) => {
                 if let Ok(type_name) = type_name(

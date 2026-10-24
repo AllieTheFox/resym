@@ -65,29 +65,56 @@ pub struct MethodImplementation {
 /// (`LF_MFUNCTION`). Methods sharing a type can only be told apart by name.
 pub type MethodImplementations = HashMap<(String, pdb::TypeIndex), MethodImplementation>;
 
+/// Names of the typedefs declared for tags (`typedef struct tagSIZE SIZE`,
+/// `typedef struct _GUID GUID`) and for handles (`typedef struct HDC__* HDC`),
+/// as recorded by the PDB's `S_UDT` symbols
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct TypedefNames {
+    /// Typedef names, by tag name
+    pub tags: HashMap<String, String>,
+    /// Typedef names of pointers, by the name of the tag they point to
+    pub handles: HashMap<String, String>,
+}
+
 /// Settings affecting how type names are written, applied while types are
 /// collected (unlike `DataFormatConfiguration`, applied when writing them)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct TypeNameFlavor {
+pub struct TypeNameFlavor<'n> {
     pub primitives: PrimitiveReconstructionFlavor,
     /// Prefix class, struct, union and enum names with their keyword
     /// (e.g., `struct IUnknown*`)
     pub elaborated_type_specifiers: bool,
+    /// Write tags and handles that have a typedef with the typedef's name
+    pub typedef_names: Option<&'n TypedefNames>,
 }
 
-impl TypeNameFlavor {
-    /// Flavor with the given primitive types and no elaborated specifiers
+impl TypeNameFlavor<'_> {
+    /// Flavor with the given primitive types, no elaborated specifiers and
+    /// no typedef names
     pub fn new(primitives: PrimitiveReconstructionFlavor) -> Self {
         Self {
             primitives,
             elaborated_type_specifiers: false,
+            typedef_names: None,
         }
     }
 
     /// Same flavor without elaborated specifiers, for names that can't have
     /// one (e.g., base classes)
     pub fn without_elaborated_type_specifiers(self) -> Self {
-        Self::new(self.primitives)
+        Self {
+            elaborated_type_specifiers: false,
+            ..self
+        }
+    }
+
+    /// Returns the name to write a tag with: its typedef's name if it has
+    /// one (which can't be elaborated), or its own name.
+    fn tag_name(&self, keyword: &str, name: String) -> String {
+        match self.typedef_names.and_then(|names| names.tags.get(&name)) {
+            Some(typedef_name) => typedef_name.clone(),
+            None => self.elaborate(keyword, name),
+        }
     }
 
     fn elaborate(&self, keyword: &str, name: String) -> String {
@@ -138,7 +165,7 @@ pub fn type_name(
                 name.into_owned()
             };
             (
-                type_name_flavor.elaborate(class_kind_keyword(data.kind), name),
+                type_name_flavor.tag_name(class_kind_keyword(data.kind), name),
                 String::default(),
             )
         }
@@ -152,13 +179,13 @@ pub fn type_name(
             } else {
                 name.into_owned()
             };
-            (type_name_flavor.elaborate("union", name), String::default())
+            (type_name_flavor.tag_name("union", name), String::default())
         }
 
         pdb::TypeData::Enumeration(data) => {
             needed_types.insert((type_index, false));
             (
-                type_name_flavor.elaborate("enum", data.name.to_string().into_owned()),
+                type_name_flavor.tag_name("enum", data.name.to_string().into_owned()),
                 String::default(),
             )
         }
@@ -167,6 +194,14 @@ pub fn type_name(
             // Resolve the complete type's index, if present in the PDB
             let complete_underlying_type_index =
                 resolve_complete_type_index(type_forwarder, data.underlying_type);
+            if let Some(handle_name) = type_name_flavor
+                .typedef_names
+                .and_then(|names| names.handles.get(&handle_tag_name(type_finder, &data)?))
+            {
+                // The handle's tag is only needed through the pointer
+                needed_types.insert((complete_underlying_type_index, true));
+                return Ok((handle_name.clone(), String::default()));
+            }
             let mut temporary_needed_types = HashSet::new();
             let (type_left, type_right) = type_name(
                 type_finder,
@@ -388,6 +423,26 @@ pub fn type_name(
     Ok((type_left, type_right))
 }
 
+/// Returns the name of the class `data` points to if it's a plain pointer to
+/// a class, the way handles are declared (`typedef struct HDC__* HDC`).
+pub(crate) fn handle_tag_name(
+    type_finder: &pdb::TypeFinder,
+    data: &pdb::PointerType,
+) -> Option<String> {
+    let attributes = data.attributes;
+    if attributes.pointer_mode() != pdb::PointerMode::Pointer
+        || attributes.is_mocom()
+        || attributes.is_unaligned()
+        || attributes.is_restrict()
+    {
+        return None;
+    }
+    match type_finder.find(data.underlying_type).ok()?.parse().ok()? {
+        pdb::TypeData::Class(class) => Some(class.name.to_string().into_owned()),
+        _ => None,
+    }
+}
+
 fn array_base_name(
     type_finder: &pdb::TypeFinder,
     type_forwarder: &TypeForwarder,
@@ -603,6 +658,8 @@ pub struct Data<'p> {
     type_names: HashSet<String>,
     /// Types declared inside another type (their qualifier isn't a namespace)
     nested_type_indices: HashSet<pdb::TypeIndex>,
+    /// Typedefs written after the declaration of the type they name
+    typedef_declarations: HashMap<pdb::TypeIndex, Vec<String>>,
 }
 
 impl Data<'_> {
@@ -623,6 +680,9 @@ impl Data<'_> {
         );
         // The contents of namespace blocks are indented through this writer
         let output_writer = &mut IndentingWriter::new(output_writer, fmt_configuration.indent());
+        // A type can be both forward-declared and defined: its typedefs are
+        // written once
+        let mut written_typedef_declarations = HashSet::new();
 
         // Forward declarations (they don't depend on each other: sorting them
         // by namespace keeps the order of each namespace's declarations)
@@ -647,6 +707,11 @@ impl Data<'_> {
             }
             is_first_forward_declaration = false;
             e.reconstruct_as(name, output_writer)?;
+            self.reconstruct_typedef_declarations(
+                *type_index,
+                &mut written_typedef_declarations,
+                output_writer,
+            )?;
         }
 
         if !type_depth_map.is_empty() {
@@ -660,6 +725,7 @@ impl Data<'_> {
                         *type_index,
                         fmt_configuration,
                         &mut namespace_scope,
+                        &mut written_typedef_declarations,
                         output_writer,
                     )?;
                 }
@@ -679,6 +745,7 @@ impl Data<'_> {
                     *type_index,
                     fmt_configuration,
                     &mut namespace_scope,
+                    &mut written_typedef_declarations,
                     output_writer,
                 )?;
             }
@@ -690,11 +757,12 @@ impl Data<'_> {
 
     /// Writes the definition of the enum, class/struct or union with the
     /// given index, if any.
-    fn reconstruct_definition(
-        &self,
+    fn reconstruct_definition<'d>(
+        &'d self,
         type_index: pdb::TypeIndex,
         fmt_configuration: &DataFormatConfiguration,
         namespace_scope: &mut NamespaceScope,
+        written_typedef_declarations: &mut HashSet<&'d str>,
         output_writer: &mut IndentingWriter<'_, impl std::fmt::Write>,
     ) -> fmt::Result {
         // Enum definitions
@@ -728,7 +796,74 @@ impl Data<'_> {
             u.reconstruct_as(name, fmt_configuration, output_writer)?;
         }
 
+        self.reconstruct_typedef_declarations(
+            type_index,
+            written_typedef_declarations,
+            output_writer,
+        )
+    }
+
+    /// Writes the typedefs naming the type with the given index that haven't
+    /// been written yet.
+    fn reconstruct_typedef_declarations<'d>(
+        &'d self,
+        type_index: pdb::TypeIndex,
+        written_typedef_declarations: &mut HashSet<&'d str>,
+        output_writer: &mut impl std::fmt::Write,
+    ) -> fmt::Result {
+        for declaration in self
+            .typedef_declarations
+            .get(&type_index)
+            .into_iter()
+            .flatten()
+        {
+            if written_typedef_declarations.insert(declaration) {
+                writeln!(output_writer, "{declaration}")?;
+            }
+        }
         Ok(())
+    }
+
+    /// Sets the typedefs to write after the declaration of each type of this
+    /// set that has typedef names, so that the names used for them are
+    /// declared.
+    pub fn assign_typedef_names(&mut self, typedef_names: &TypedefNames) {
+        let declared_types: Vec<(pdb::TypeIndex, &str, &String)> = self
+            .forward_declarations
+            .iter()
+            .map(|(type_index, f)| (*type_index, f.kind.keyword(), &f.name))
+            .chain(
+                self.classes
+                    .iter()
+                    .map(|(type_index, c)| (*type_index, class_kind_keyword(c.kind), &c.name)),
+            )
+            .chain(
+                self.unions
+                    .iter()
+                    .map(|(type_index, u)| (*type_index, "union", &u.name)),
+            )
+            .chain(
+                self.enums
+                    .iter()
+                    .map(|(type_index, e)| (*type_index, "enum", &e.name)),
+            )
+            .collect();
+        let mut typedef_declarations: HashMap<pdb::TypeIndex, Vec<String>> = HashMap::new();
+        for (type_index, keyword, name) in declared_types {
+            if let Some(typedef_name) = typedef_names.tags.get(name) {
+                typedef_declarations
+                    .entry(type_index)
+                    .or_default()
+                    .push(format!("typedef {keyword} {name} {typedef_name};"));
+            }
+            if let Some(handle_name) = typedef_names.handles.get(name) {
+                typedef_declarations
+                    .entry(type_index)
+                    .or_default()
+                    .push(format!("typedef {keyword} {name}* {handle_name};"));
+            }
+        }
+        self.typedef_declarations = typedef_declarations;
     }
 
     /// Sets what is known about the implementations of the methods of every
@@ -879,6 +1014,7 @@ impl<'p> Data<'p> {
             unions: BTreeMap::new(),
             type_names: HashSet::new(),
             nested_type_indices: HashSet::new(),
+            typedef_declarations: HashMap::new(),
         }
     }
 

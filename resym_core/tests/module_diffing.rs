@@ -26,6 +26,7 @@ fn test_module_diffing_by_path() {
         &mut pdb_file_to,
         TEST_MODULE_PATH,
         PrimitiveReconstructionFlavor::Portable,
+        false,
         AccessSpecifierReconstructionFlavor::Always,
         true,
         false,

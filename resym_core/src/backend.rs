@@ -60,6 +60,7 @@ pub enum BackendCommand {
         PDBSlot,
         pdb_file::TypeIndex,
         PrimitiveReconstructionFlavor,       // primitive_types_flavor
+        bool,                                // use_typedef_names
         AccessSpecifierReconstructionFlavor, // print_access_specifiers,
         SizePrintFlavor,                     // size_print_flavor
         bool,                                // print_header
@@ -91,6 +92,7 @@ pub enum BackendCommand {
         PDBSlot,
         String,
         PrimitiveReconstructionFlavor,       // primitive_types_flavor
+        bool,                                // use_typedef_names
         AccessSpecifierReconstructionFlavor, // print_access_specifiers,
         SizePrintFlavor,                     // size_print_flavor
         bool,                                // print_header
@@ -121,6 +123,7 @@ pub enum BackendCommand {
     ReconstructAllTypes(
         PDBSlot,
         PrimitiveReconstructionFlavor,       // primitive_types_flavor
+        bool,                                // use_typedef_names
         AccessSpecifierReconstructionFlavor, // print_access_specifiers,
         SizePrintFlavor,                     // size_print_flavor
         bool,                                // print_header
@@ -162,6 +165,7 @@ pub enum BackendCommand {
         PDBSlot,
         pdb_file::SymbolIndex,
         PrimitiveReconstructionFlavor,       // primitive_types_flavor
+        bool,                                // use_typedef_names
         AccessSpecifierReconstructionFlavor, // print_access_specifiers,
         bool,                                // print_header
         bool,                                // print_local_variables
@@ -196,6 +200,7 @@ pub enum BackendCommand {
         PDBSlot,
         String,
         PrimitiveReconstructionFlavor,       // primitive_types_flavor
+        bool,                                // use_typedef_names
         AccessSpecifierReconstructionFlavor, // print_access_specifiers,
         bool,                                // print_header
         bool,                                // print_local_variables
@@ -229,6 +234,7 @@ pub enum BackendCommand {
     ReconstructAllSymbols(
         PDBSlot,
         PrimitiveReconstructionFlavor,       // primitive_types_flavor
+        bool,                                // use_typedef_names
         AccessSpecifierReconstructionFlavor, // print_access_specifiers,
         bool,                                // print_header
         bool,                                // print_local_variables
@@ -245,6 +251,7 @@ pub enum BackendCommand {
         PDBSlot,
         usize,
         PrimitiveReconstructionFlavor,       // primitive_types_flavor
+        bool,                                // use_typedef_names
         AccessSpecifierReconstructionFlavor, // print_access_specifiers,
         bool,                                // print_header
         bool,                                // print_local_variables
@@ -259,6 +266,7 @@ pub enum BackendCommand {
         PDBSlot,                             // pdb_to_slot
         String,                              // type_name
         PrimitiveReconstructionFlavor,       // primitives_flavor
+        bool,                                // use_typedef_names
         AccessSpecifierReconstructionFlavor, // print_access_specifiers,
         SizePrintFlavor,                     // size_print_flavor
         bool,                                // print_header
@@ -291,6 +299,7 @@ pub enum BackendCommand {
         PDBSlot,
         String,
         PrimitiveReconstructionFlavor,       // primitive_types_flavor
+        bool,                                // use_typedef_names
         AccessSpecifierReconstructionFlavor, // print_access_specifiers,
         bool,                                // print_header
         bool,                                // print_local_variables
@@ -326,6 +335,7 @@ pub enum BackendCommand {
         PDBSlot,
         String,
         PrimitiveReconstructionFlavor,       // primitive_types_flavor
+        bool,                                // use_typedef_names
         AccessSpecifierReconstructionFlavor, // print_access_specifiers,
         bool,                                // print_header
         bool,                                // print_local_variables
@@ -342,6 +352,7 @@ pub enum BackendCommand {
         PDBSlot,
         String,                              // source_file_path
         PrimitiveReconstructionFlavor,       // primitive_types_flavor
+        bool,                                // use_typedef_names
         AccessSpecifierReconstructionFlavor, // print_access_specifiers
         bool,                                // print_header
         SizePrintFlavor,                     // size_print_flavor
@@ -375,6 +386,7 @@ pub enum BackendCommand {
         PDBSlot,
         String,                              // source_file_path
         PrimitiveReconstructionFlavor,       // primitive_types_flavor
+        bool,                                // use_typedef_names
         AccessSpecifierReconstructionFlavor, // print_access_specifiers
         bool,                                // print_header
         SizePrintFlavor,                     // size_print_flavor
@@ -621,6 +633,7 @@ fn worker_thread_routine(
                 pdb_slot,
                 type_index,
                 primitives_flavor,
+                use_typedef_names,
                 print_access_specifiers,
                 size_print_flavor,
                 print_header,
@@ -652,6 +665,7 @@ fn worker_thread_routine(
                         pdb_file,
                         type_index,
                         primitives_flavor,
+                        use_typedef_names,
                         print_access_specifiers,
                         size_print_flavor,
                         print_header,
@@ -688,6 +702,7 @@ fn worker_thread_routine(
                 pdb_slot,
                 type_name,
                 primitives_flavor,
+                use_typedef_names,
                 print_access_specifiers,
                 size_print_flavor,
                 print_header,
@@ -719,6 +734,7 @@ fn worker_thread_routine(
                         pdb_file,
                         &type_name,
                         primitives_flavor,
+                        use_typedef_names,
                         print_access_specifiers,
                         size_print_flavor,
                         print_header,
@@ -754,6 +770,7 @@ fn worker_thread_routine(
             BackendCommand::ReconstructAllTypes(
                 pdb_slot,
                 primitives_flavor,
+                use_typedef_names,
                 print_access_specifiers,
                 size_print_flavor,
                 print_header,
@@ -783,6 +800,7 @@ fn worker_thread_routine(
                     let reconstructed_type_result = reconstruct_all_types_command(
                         pdb_file,
                         primitives_flavor,
+                        use_typedef_names,
                         print_access_specifiers,
                         size_print_flavor,
                         print_header,
@@ -931,6 +949,7 @@ fn worker_thread_routine(
                 pdb_slot,
                 symbol_index,
                 primitives_flavor,
+                use_typedef_names,
                 print_access_specifiers,
                 print_header,
                 print_local_variables,
@@ -965,6 +984,7 @@ fn worker_thread_routine(
                         .reconstruct_symbol_by_index(
                             symbol_index,
                             primitives_flavor,
+                            use_typedef_names,
                             print_access_specifiers,
                             print_local_variables,
                             print_local_variable_locations,
@@ -1005,6 +1025,7 @@ fn worker_thread_routine(
                 pdb_slot,
                 symbol_name,
                 primitives_flavor,
+                use_typedef_names,
                 print_access_specifiers,
                 print_header,
                 print_local_variables,
@@ -1039,6 +1060,7 @@ fn worker_thread_routine(
                         .reconstruct_symbol_by_name(
                             &symbol_name,
                             primitives_flavor,
+                            use_typedef_names,
                             print_access_specifiers,
                             print_local_variables,
                             print_local_variable_locations,
@@ -1078,6 +1100,7 @@ fn worker_thread_routine(
             BackendCommand::ReconstructAllSymbols(
                 pdb_slot,
                 primitives_flavor,
+                use_typedef_names,
                 print_access_specifiers,
                 print_header,
                 print_local_variables,
@@ -1090,6 +1113,7 @@ fn worker_thread_routine(
                     let result = pdb_file
                         .reconstruct_all_symbols(
                             primitives_flavor,
+                            use_typedef_names,
                             print_access_specifiers,
                             print_local_variables,
                             print_local_variable_locations,
@@ -1110,6 +1134,7 @@ fn worker_thread_routine(
                 pdb_to_slot,
                 symbol_name,
                 primitives_flavor,
+                use_typedef_names,
                 print_access_specifiers,
                 print_header,
                 print_local_variables,
@@ -1146,6 +1171,7 @@ fn worker_thread_routine(
                             pdb_file_to,
                             &symbol_name,
                             primitives_flavor,
+                            use_typedef_names,
                             print_access_specifiers,
                             print_header,
                             print_local_variables,
@@ -1185,6 +1211,7 @@ fn worker_thread_routine(
                 pdb_slot,
                 module_index,
                 primitives_flavor,
+                use_typedef_names,
                 print_access_specifiers,
                 print_header,
                 print_local_variables,
@@ -1198,6 +1225,7 @@ fn worker_thread_routine(
                         .reconstruct_module_by_index(
                             module_index,
                             primitives_flavor,
+                            use_typedef_names,
                             print_access_specifiers,
                             print_local_variables,
                             print_local_variable_locations,
@@ -1237,6 +1265,7 @@ fn worker_thread_routine(
                 pdb_to_slot,
                 type_name,
                 primitives_flavor,
+                use_typedef_names,
                 print_access_specifiers,
                 size_print_flavor,
                 print_header,
@@ -1270,6 +1299,7 @@ fn worker_thread_routine(
                             pdb_file_to,
                             &type_name,
                             primitives_flavor,
+                            use_typedef_names,
                             print_access_specifiers,
                             size_print_flavor,
                             print_header,
@@ -1307,6 +1337,7 @@ fn worker_thread_routine(
                 pdb_to_slot,
                 module_path,
                 primitives_flavor,
+                use_typedef_names,
                 print_access_specifiers,
                 print_header,
                 print_local_variables,
@@ -1322,6 +1353,7 @@ fn worker_thread_routine(
                             pdb_file_to,
                             &module_path,
                             primitives_flavor,
+                            use_typedef_names,
                             print_access_specifiers,
                             print_header,
                             print_local_variables,
@@ -1358,6 +1390,7 @@ fn worker_thread_routine(
                 pdb_slot,
                 source_file_path,
                 primitives_flavor,
+                use_typedef_names,
                 print_access_specifiers,
                 print_header,
                 size_print_flavor,
@@ -1390,6 +1423,7 @@ fn worker_thread_routine(
                         .reconstruct_source_file(
                             &source_file_path,
                             primitives_flavor,
+                            use_typedef_names,
                             print_access_specifiers,
                             size_print_flavor,
                             integers_as_hexadecimal,
@@ -1429,6 +1463,7 @@ fn worker_thread_routine(
                 pdb_to_slot,
                 source_file_path,
                 primitives_flavor,
+                use_typedef_names,
                 print_access_specifiers,
                 print_header,
                 size_print_flavor,
@@ -1463,6 +1498,7 @@ fn worker_thread_routine(
                             pdb_file_to,
                             &source_file_path,
                             primitives_flavor,
+                            use_typedef_names,
                             print_access_specifiers,
                             print_header,
                             size_print_flavor,
@@ -1513,6 +1549,7 @@ fn reconstruct_type_by_index_command<'p, T>(
     pdb_file: &PdbFile<'p, T>,
     type_index: pdb_file::TypeIndex,
     primitives_flavor: PrimitiveReconstructionFlavor,
+    use_typedef_names: bool,
     print_access_specifiers: AccessSpecifierReconstructionFlavor,
     size_print_flavor: SizePrintFlavor,
     print_header: bool,
@@ -1545,6 +1582,7 @@ where
     let (data, xrefs_from) = pdb_file.reconstruct_type_by_index(
         type_index,
         primitives_flavor,
+        use_typedef_names,
         print_access_specifiers,
         size_print_flavor,
         reconstruct_dependencies,
@@ -1582,6 +1620,7 @@ fn reconstruct_type_by_name_command<'p, T>(
     pdb_file: &PdbFile<'p, T>,
     type_name: &str,
     primitives_flavor: PrimitiveReconstructionFlavor,
+    use_typedef_names: bool,
     print_access_specifiers: AccessSpecifierReconstructionFlavor,
     size_print_flavor: SizePrintFlavor,
     print_header: bool,
@@ -1614,6 +1653,7 @@ where
     let (data, xrefs_from) = pdb_file.reconstruct_type_by_name(
         type_name,
         primitives_flavor,
+        use_typedef_names,
         print_access_specifiers,
         size_print_flavor,
         reconstruct_dependencies,
@@ -1650,6 +1690,7 @@ where
 fn reconstruct_all_types_command<'p, T>(
     pdb_file: &PdbFile<'p, T>,
     primitives_flavor: PrimitiveReconstructionFlavor,
+    use_typedef_names: bool,
     print_access_specifiers: AccessSpecifierReconstructionFlavor,
     size_print_flavor: SizePrintFlavor,
     print_header: bool,
@@ -1680,6 +1721,7 @@ where
 {
     let data = pdb_file.reconstruct_all_types(
         primitives_flavor,
+        use_typedef_names,
         print_access_specifiers,
         size_print_flavor,
         integers_as_hexadecimal,

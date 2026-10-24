@@ -23,17 +23,7 @@ impl ForwardDeclaration {
     /// Writes the declaration under the given name (e.g., the unqualified
     /// name when declared inside a namespace block).
     pub(crate) fn reconstruct_as(&self, name: &str, f: &mut impl std::fmt::Write) -> fmt::Result {
-        writeln!(
-            f,
-            "{} {};",
-            match self.kind {
-                ForwardDeclarationKind::Class => "class",
-                ForwardDeclarationKind::Struct => "struct",
-                ForwardDeclarationKind::Union => "union",
-                ForwardDeclarationKind::Interface => "interface",
-            },
-            name
-        )
+        writeln!(f, "{} {};", self.kind.keyword(), name)
     }
 }
 
@@ -51,6 +41,16 @@ impl ForwardDeclarationKind {
             pdb::ClassKind::Class => Self::Class,
             pdb::ClassKind::Struct => Self::Struct,
             pdb::ClassKind::Interface => Self::Interface,
+        }
+    }
+
+    /// Keyword declaring a type of this kind
+    pub fn keyword(&self) -> &'static str {
+        match self {
+            Self::Class => "class",
+            Self::Struct => "struct",
+            Self::Union => "union",
+            Self::Interface => "interface",
         }
     }
 }

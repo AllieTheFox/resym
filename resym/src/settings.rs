@@ -56,6 +56,8 @@ pub struct ResymAppSettings {
     pub omit_virtual_on_overrides: bool,
     // Prefix type names with their keyword (e.g., `struct IUnknown*`)
     pub print_elaborated_type_specifiers: bool,
+    // Write tags and handles with their typedef name (e.g., `GUID`, `HWND`)
+    pub use_typedef_names: bool,
     #[serde(with = "IndentationFlavorDef")]
     pub indentation: IndentationFlavor,
     // Don't separate groups of members with blank lines
@@ -103,6 +105,7 @@ impl Default for ResymAppSettings {
             hide_base_class_offsets: false,
             omit_virtual_on_overrides: false,
             print_elaborated_type_specifiers: false,
+            use_typedef_names: true,
             indentation: IndentationFlavor::TwoSpaces,
             compact_output: false,
             print_source_locations: true,

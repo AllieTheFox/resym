@@ -193,6 +193,10 @@ fn tab_ui(ui: &mut egui::Ui, tab: SettingsTab, settings: &mut ResymAppSettings) 
                 &mut settings.print_elaborated_type_specifiers,
                 "Print struct/class/union/enum before type names",
             );
+            ui.checkbox(
+                &mut settings.use_typedef_names,
+                "Use typedef names for structs and handles (GUID, HWND)",
+            );
             ui.checkbox(&mut settings.print_offset_info, "Print offset comments");
             ui.checkbox(
                 &mut settings.hide_base_class_offsets,

@@ -36,6 +36,7 @@ pub fn diff_type_by_name<'p, T>(
     pdb_file_to: &PdbFile<'p, T>,
     type_name: &str,
     primitives_flavor: PrimitiveReconstructionFlavor,
+    use_typedef_names: bool,
     print_access_specifiers: AccessSpecifierReconstructionFlavor,
     size_print_flavor: SizePrintFlavor,
     print_header: bool,
@@ -81,6 +82,7 @@ where
             .reconstruct_type_by_name(
                 type_name,
                 primitives_flavor,
+                use_typedef_names,
                 print_access_specifiers,
                 size_print_flavor,
                 reconstruct_dependencies,
@@ -111,6 +113,7 @@ where
             .reconstruct_type_by_name(
                 type_name,
                 primitives_flavor,
+                use_typedef_names,
                 print_access_specifiers,
                 size_print_flavor,
                 reconstruct_dependencies,
@@ -158,6 +161,7 @@ pub fn diff_module_by_path<'p, T>(
     pdb_file_to: &PdbFile<'p, T>,
     module_path: &str,
     primitives_flavor: PrimitiveReconstructionFlavor,
+    use_typedef_names: bool,
     print_access_specifiers: AccessSpecifierReconstructionFlavor,
     print_header: bool,
     print_local_variables: bool,
@@ -188,6 +192,7 @@ where
                 .reconstruct_module_by_path(
                     module_path,
                     primitives_flavor,
+                    use_typedef_names,
                     print_access_specifiers,
                     print_local_variables,
                     print_local_variable_locations,
@@ -223,6 +228,7 @@ pub fn diff_source_file_by_path<'p, T>(
     pdb_file_to: &PdbFile<'p, T>,
     source_file_path: &str,
     primitives_flavor: PrimitiveReconstructionFlavor,
+    use_typedef_names: bool,
     print_access_specifiers: AccessSpecifierReconstructionFlavor,
     print_header: bool,
     size_print_flavor: SizePrintFlavor,
@@ -272,6 +278,7 @@ where
                 .reconstruct_source_file(
                     source_file_path,
                     primitives_flavor,
+                    use_typedef_names,
                     print_access_specifiers,
                     size_print_flavor,
                     integers_as_hexadecimal,
@@ -328,6 +335,7 @@ pub fn diff_symbol_by_name<'p, T>(
     pdb_file_to: &PdbFile<'p, T>,
     symbol_name: &str,
     primitives_flavor: PrimitiveReconstructionFlavor,
+    use_typedef_names: bool,
     print_access_specifiers: AccessSpecifierReconstructionFlavor,
     print_header: bool,
     print_local_variables: bool,
@@ -377,6 +385,7 @@ where
                 .reconstruct_symbol_by_name(
                     symbol_name,
                     primitives_flavor,
+                    use_typedef_names,
                     print_access_specifiers,
                     print_local_variables,
                     print_local_variable_locations,

@@ -39,6 +39,7 @@ fn test_type_reconstruction_portable_access_specifiers() {
     test_type_reconstruction_internal(
         "type_reconstruction_portable_access_specifiers",
         PrimitiveReconstructionFlavor::Portable,
+        false,
         AccessSpecifierReconstructionFlavor::Always,
         SizePrintFlavor::Comment,
         false,
@@ -54,6 +55,7 @@ fn test_type_reconstruction_microsoft_access_specifiers() {
     test_type_reconstruction_internal(
         "type_reconstruction_microsoft_access_specifiers",
         PrimitiveReconstructionFlavor::Microsoft,
+        false,
         AccessSpecifierReconstructionFlavor::Always,
         SizePrintFlavor::Comment,
         false,
@@ -69,6 +71,7 @@ fn test_type_reconstruction_raw_access_specifiers() {
     test_type_reconstruction_internal(
         "type_reconstruction_raw_access_specifiers",
         PrimitiveReconstructionFlavor::Raw,
+        false,
         AccessSpecifierReconstructionFlavor::Always,
         SizePrintFlavor::Comment,
         false,
@@ -84,6 +87,7 @@ fn test_type_reconstruction_msvc_access_specifiers() {
     test_type_reconstruction_internal(
         "type_reconstruction_msvc_access_specifiers",
         PrimitiveReconstructionFlavor::Msvc,
+        false,
         AccessSpecifierReconstructionFlavor::Always,
         SizePrintFlavor::Comment,
         false,
@@ -99,6 +103,7 @@ fn test_type_reconstruction_automatic_access_specifiers() {
     test_type_reconstruction_internal(
         "type_reconstruction_automatic_access_specifiers",
         PrimitiveReconstructionFlavor::Portable,
+        false,
         AccessSpecifierReconstructionFlavor::Automatic,
         SizePrintFlavor::Comment,
         false,
@@ -114,6 +119,7 @@ fn test_type_reconstruction_no_size_info() {
     test_type_reconstruction_internal(
         "test_type_reconstruction_no_size_info",
         PrimitiveReconstructionFlavor::Portable,
+        false,
         AccessSpecifierReconstructionFlavor::Automatic,
         SizePrintFlavor::Disabled,
         false,
@@ -129,6 +135,7 @@ fn test_type_reconstruction_no_offset_info() {
     test_type_reconstruction_internal(
         "test_type_reconstruction_no_offset_info",
         PrimitiveReconstructionFlavor::Portable,
+        false,
         AccessSpecifierReconstructionFlavor::Automatic,
         SizePrintFlavor::Comment,
         false,
@@ -144,6 +151,7 @@ fn test_type_reconstruction_no_comments() {
     test_type_reconstruction_internal(
         "test_type_reconstruction_no_comments",
         PrimitiveReconstructionFlavor::Portable,
+        false,
         AccessSpecifierReconstructionFlavor::Automatic,
         SizePrintFlavor::Disabled,
         false,
@@ -157,6 +165,7 @@ fn test_type_reconstruction_no_comments() {
 fn test_type_reconstruction_internal(
     test_name: &str,
     primitives_flavor: PrimitiveReconstructionFlavor,
+    use_typedef_names: bool,
     print_access_specifiers: AccessSpecifierReconstructionFlavor,
     print_size_info: SizePrintFlavor,
     reconstruct_dependencies: bool,
@@ -171,6 +180,7 @@ fn test_type_reconstruction_internal(
             .reconstruct_type_by_name(
                 test_case_type_name,
                 primitives_flavor,
+                use_typedef_names,
                 print_access_specifiers,
                 print_size_info,
                 reconstruct_dependencies,

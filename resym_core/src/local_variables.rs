@@ -453,7 +453,7 @@ pub struct LocalVariableFormat<'a> {
 pub struct NameContext<'a, 't> {
     pub type_finder: &'a pdb::TypeFinder<'t>,
     pub type_forwarder: &'a TypeForwarder,
-    pub type_name_flavor: &'a TypeNameFlavor,
+    pub type_name_flavor: &'a TypeNameFlavor<'a>,
     /// Needed to name inlined functions
     pub id_finder: Option<&'a pdb::IdFinder<'t>>,
     /// Turn cross module references of the procedure's module (link-time
