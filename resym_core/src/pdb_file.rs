@@ -10,7 +10,7 @@ use std::{
     fmt::Write,
     io::{self, Read, Seek},
     path::PathBuf,
-    sync::{Arc, RwLock},
+    sync::{Arc, OnceLock, RwLock},
 };
 #[cfg(not(target_arch = "wasm32"))]
 use std::{fs::File, path::Path, time::Instant};
@@ -19,9 +19,11 @@ use crate::{
     error::{Result, ResymCoreError},
     frontend::ReconstructedType,
     par_iter_if_available,
+    parameter_names::{procedure_parameter_names, ParameterLayout},
     pdb_types::{
         self, is_unnamed_type, type_name, AccessSpecifierReconstructionFlavor,
-        DataFormatConfiguration, PrimitiveReconstructionFlavor, SizePrintFlavor,
+        DataFormatConfiguration, MethodParameterNames, PrimitiveReconstructionFlavor,
+        SizePrintFlavor,
     },
 };
 
@@ -131,6 +133,9 @@ where
     pub address_map: pdb::AddressMap<'p>,
     pub file_path: PathBuf,
     pub xref_to_map: RwLock<DashMap<TypeIndex, Vec<TypeIndex>>>,
+    /// Parameter names of the methods implemented in this PDB, read from the
+    /// procedure symbols of every module on first use
+    method_parameter_names: OnceLock<MethodParameterNames>,
     pdb: RwLock<pdb::PDB<'p, T>>,
 }
 
@@ -159,6 +164,7 @@ impl<'p> PdbFile<'p, File> {
             address_map,
             file_path: pdb_file_path.to_owned(),
             xref_to_map: DashMap::default().into(),
+            method_parameter_names: OnceLock::new(),
             pdb: pdb.into(),
         };
         pdb_file.load_symbols()?;
@@ -194,6 +200,7 @@ impl<'p> PdbFile<'p, PDBDataSource> {
             address_map,
             file_path: pdb_file_name.into(),
             xref_to_map: DashMap::default().into(),
+            method_parameter_names: OnceLock::new(),
             pdb: pdb.into(),
         };
         pdb_file.load_symbols()?;
@@ -227,6 +234,7 @@ impl<'p> PdbFile<'p, PDBDataSource> {
             address_map,
             file_path: pdb_file_name.into(),
             xref_to_map: DashMap::default().into(),
+            method_parameter_names: OnceLock::new(),
             pdb: pdb.into(),
         };
         pdb_file.load_symbols()?;
@@ -343,6 +351,8 @@ where
         ignore_compiler_generated_methods: bool,
         preserve_member_order: bool,
         reconstruct_namespaces: bool,
+        print_override_specifiers: bool,
+        print_argument_names: bool,
     ) -> Result<ReconstructedType> {
         // Populate our `TypeFinder` and find the right type index
         let mut type_index = TypeIndex::default();
@@ -439,6 +449,8 @@ where
                 ignore_compiler_generated_methods,
                 preserve_member_order,
                 reconstruct_namespaces,
+                print_override_specifiers,
+                print_argument_names,
             )
         }
     }
@@ -457,6 +469,8 @@ where
         ignore_compiler_generated_methods: bool,
         preserve_member_order: bool,
         reconstruct_namespaces: bool,
+        print_override_specifiers: bool,
+        print_argument_names: bool,
     ) -> Result<ReconstructedType> {
         // Populate our `TypeFinder`
         let mut type_finder = self.type_information.finder();
@@ -481,6 +495,8 @@ where
             ignore_compiler_generated_methods,
             preserve_member_order,
             reconstruct_namespaces,
+            print_override_specifiers,
+            print_argument_names,
         )
     }
 
@@ -864,6 +880,8 @@ where
         ignore_compiler_generated_methods: bool,
         preserve_member_order: bool,
         reconstruct_namespaces: bool,
+        print_override_specifiers: bool,
+        print_argument_names: bool,
     ) -> Result<ReconstructedType> {
         let fmt_configuration = DataFormatConfiguration {
             print_access_specifiers,
@@ -874,6 +892,7 @@ where
             ignore_compiler_generated_methods,
             preserve_member_order,
             reconstruct_namespaces,
+            print_override_specifiers,
         };
         let mut type_data = pdb_types::Data::new(ignore_std_types);
 
@@ -888,6 +907,9 @@ where
                 &mut needed_types,
             )?;
 
+            if print_argument_names {
+                type_data.assign_parameter_names(self.method_parameter_names(type_finder)?);
+            }
             let mut reconstruction_output = String::new();
             type_data.reconstruct(
                 &fmt_configuration,
@@ -988,6 +1010,9 @@ where
         );
         let type_depth_map = compute_type_depth_map(&type_dependency_map, &root_types);
 
+        if print_argument_names {
+            type_data.assign_parameter_names(self.method_parameter_names(type_finder)?);
+        }
         let mut reconstruction_output = String::new();
         type_data.reconstruct(
             &fmt_configuration,
@@ -1010,6 +1035,8 @@ where
         ignore_compiler_generated_methods: bool,
         preserve_member_order: bool,
         reconstruct_namespaces: bool,
+        print_override_specifiers: bool,
+        print_argument_names: bool,
     ) -> Result<String> {
         let mut type_data = pdb_types::Data::new(ignore_std_types);
         let mut processed_types = Vec::new();
@@ -1074,6 +1101,10 @@ where
                     }
                 }
             }
+
+            if print_argument_names {
+                type_data.assign_parameter_names(self.method_parameter_names(&type_finder)?);
+            }
         }
 
         // Deduce type "depth" from the dependency map
@@ -1095,6 +1126,7 @@ where
                 ignore_compiler_generated_methods,
                 preserve_member_order,
                 reconstruct_namespaces,
+                print_override_specifiers,
             },
             &type_depth_map,
             &mut reconstruction_output,
@@ -1194,6 +1226,64 @@ where
             .collect()
     }
 
+    /// Returns the parameter names of the methods implemented in this PDB.
+    /// The procedure symbols of every module are read the first time.
+    fn method_parameter_names(
+        &self,
+        type_finder: &pdb::TypeFinder<'_>,
+    ) -> Result<&MethodParameterNames> {
+        if let Some(parameter_names) = self.method_parameter_names.get() {
+            return Ok(parameter_names);
+        }
+
+        let start = Instant::now();
+        let mut parameter_names = MethodParameterNames::new();
+        {
+            let mut pdb = self.pdb.write().expect("lock shouldn't be poisoned");
+            let mut modules = self.debug_information.modules()?;
+            while let Some(module) = modules.next()? {
+                let Some(module_info) = pdb.module_info(&module)? else {
+                    continue;
+                };
+                let mut symbols = module_info.symbols()?;
+                while let Some(symbol) = symbols.next()? {
+                    let Ok(pdb::SymbolData::Procedure(procedure)) = symbol.parse() else {
+                        continue;
+                    };
+                    let Some(layout) =
+                        ParameterLayout::from_type(type_finder, procedure.type_index)
+                    else {
+                        continue;
+                    };
+                    if !layout.is_member_function {
+                        continue;
+                    }
+                    let key = (
+                        procedure.name.to_string().into_owned(),
+                        procedure.type_index,
+                    );
+                    if parameter_names.contains_key(&key) {
+                        // Inline methods are implemented in several modules
+                        continue;
+                    }
+                    if let Some(names) = procedure_parameter_names(
+                        module_info.symbols_at(symbol.index())?,
+                        procedure.end,
+                        &layout,
+                    ) {
+                        parameter_names.insert(key, names);
+                    }
+                }
+            }
+        }
+        log::debug!(
+            "Method parameter names extraction took {} ms",
+            start.elapsed().as_millis()
+        );
+
+        Ok(self.method_parameter_names.get_or_init(|| parameter_names))
+    }
+
     fn reconstruct_symbol(
         &self,
         type_finder: &pdb::ItemFinder<'_, pdb::TypeIndex>,
@@ -1229,69 +1319,21 @@ where
 
             // Functions and methods
             pdb::SymbolData::Procedure(procedure) => {
-                // TODO: fix arg alignment issue
-                // ex: AdtpBuildSecurityDescriptorChangeString
-
-                // List parameter names
+                // Parameter names, read from the symbols inside the procedure
+                let parameter_layout =
+                    ParameterLayout::from_type(type_finder, procedure.type_index);
                 let symbol_iter = if symbol_index.0 == GLOBAL_MODULE_INDEX {
                     Some(self.global_symbols.iter_at(symbol.index()))
                 } else if let Some(module_info) = module_info {
-                    Some(module_info.symbols_at(symbol_index.1.into()).unwrap())
+                    module_info.symbols_at(symbol.index()).ok()
                 } else {
                     None
                 };
-
-                let mut args = vec![];
-                let mut register_variable_names = vec![];
-                let mut register_relative_names = vec![];
-
-                if let Some(mut symbol_iter) = symbol_iter {
-                    while let Some(nested_symbol) = symbol_iter.next().unwrap_or_default() {
-                        if nested_symbol.index() == procedure.end {
-                            break;
-                        }
-
-                        if let Ok(sym_data) = nested_symbol.parse() {
-                            match sym_data {
-                                pdb::SymbolData::Local(data) => {
-                                    if data.flags.isparam {
-                                        args.push(
-                                            sym_data
-                                                .name()
-                                                .unwrap_or_default()
-                                                .to_string()
-                                                .to_string(),
-                                        );
-                                    }
-                                }
-
-                                pdb::SymbolData::RegisterVariable(data) => {
-                                    register_variable_names.push(data.name.to_string().to_string());
-                                }
-
-                                pdb::SymbolData::RegisterRelative(data) => {
-                                    register_relative_names.push(data.name.to_string().to_string());
-                                }
-
-                                _ => {}
-                            }
-                        }
-                    }
-                }
-
-                let mut args = if args.is_empty() {
-                    if register_variable_names.is_empty() {
-                        register_relative_names
-                    } else {
-                        register_variable_names
-                    }
-                } else {
-                    args
-                };
-
-                if !args.is_empty() && args[0] == "this" {
-                    args.remove(0);
-                }
+                let parameter_names = parameter_layout.as_ref().zip(symbol_iter).and_then(
+                    |(parameter_layout, symbol_iter)| {
+                        procedure_parameter_names(symbol_iter, procedure.end, parameter_layout)
+                    },
+                );
 
                 let symbol_rva = symbol_rva(&procedure.offset, &self.address_map)
                     .map(|offset| format!("RVA=0x{:x} ", offset))
@@ -1325,52 +1367,33 @@ where
                     ));
                 }
 
-                // FIXME(ergrelet): this is a dirty hack... Can we do better?
-                let arg_string = if args.is_empty() {
+                let arg_string = match (parameter_layout, parameter_names) {
+                    (Some(parameter_layout), Some(parameter_names))
+                        if parameter_names.iter().any(Option::is_some) =>
+                    {
+                        let arguments = pdb_types::argument_list(
+                            type_finder,
+                            &self.forwarder_to_complete_type,
+                            parameter_layout.argument_list,
+                            &primitives_flavor,
+                            &mut needed_types,
+                        )
+                        .ok()?;
+                        let arguments = arguments
+                            .iter()
+                            .enumerate()
+                            .map(|(i, (type_left, type_right))| {
+                                match parameter_names.get(i).and_then(Option::as_ref) {
+                                    Some(name) => format!("{type_left} {name}{type_right}"),
+                                    None => format!("{type_left}{type_right}"),
+                                }
+                            })
+                            .collect::<Vec<String>>()
+                            .join(", ");
+                        format!("({arguments})")
+                    }
                     // Only types, no argument names
-                    type_name.1.clone()
-                } else {
-                    // Inject argument names
-                    //
-                    // Find beginning and end of the argument list
-                    let start_offset = type_name
-                        .1
-                        .find('(')
-                        .expect("type_name.1 should contain '('");
-                    let end_offset = type_name
-                        .1
-                        .rfind(')')
-                        .expect("type_name.1 should contain ')'");
-
-                    // Split at commas
-                    let parts = type_name.1[start_offset..end_offset]
-                        .split(',')
-                        .collect::<Vec<_>>();
-                    let args = args.iter().take(parts.len()).collect::<Vec<_>>();
-
-                    // Rejoin while adding argument names
-                    let arg_list = parts
-                        .iter()
-                        .enumerate()
-                        .map(|(i, p)| {
-                            if p.ends_with('(') {
-                                p.to_string()
-                            } else if let Some(s) = args.get(i) {
-                                format!("{} {}", p, s)
-                            } else {
-                                p.to_string()
-                            }
-                        })
-                        .collect::<Vec<_>>()
-                        .join(",");
-
-                    // Reconstruct the whole string
-                    format!(
-                        "{}{}{}",
-                        &type_name.1[..start_offset],
-                        arg_list,
-                        &type_name.1[end_offset..]
-                    )
+                    _ => type_name.1.clone(),
                 };
 
                 Some(format!(

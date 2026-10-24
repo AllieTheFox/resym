@@ -7,6 +7,7 @@ mod nested;
 mod primitive_types;
 mod union;
 
+use std::cell::Cell;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
 use std::ops::Range;
@@ -33,6 +34,10 @@ use self::forward_declaration::{ForwardDeclaration, ForwardDeclarationKind};
 pub type NeededTypeSet = HashSet<(pdb::TypeIndex, bool)>;
 
 pub type TypeForwarder = dashmap::DashMap<pdb::TypeIndex, pdb::TypeIndex>;
+
+/// Parameter names of methods, by qualified method name and method type
+/// (`LF_MFUNCTION`). Methods sharing a type can only be told apart by name.
+pub type MethodParameterNames = HashMap<(String, pdb::TypeIndex), Vec<Option<String>>>;
 
 /// Return a pair of strings representing the given `type_index`.
 pub fn type_name(
@@ -636,6 +641,17 @@ impl Data<'_> {
         Ok(())
     }
 
+    /// Sets the parameter names of the methods of every type of this set
+    /// (including nested types) found in `parameter_names`.
+    pub fn assign_parameter_names(&mut self, parameter_names: &MethodParameterNames) {
+        for class in self.classes.values_mut() {
+            class.assign_parameter_names(parameter_names);
+        }
+        for u in self.unions.values_mut() {
+            u.assign_parameter_names(parameter_names);
+        }
+    }
+
     /// Returns the types that are also defined inside another type of this
     /// set, mapped to the top-level type whose reconstruction contains them.
     pub fn inlined_nested_types(&self) -> HashMap<pdb::TypeIndex, pdb::TypeIndex> {
@@ -1080,6 +1096,52 @@ fn is_namespace_path(qualifier: &str) -> bool {
     })
 }
 
+/// Returns the access specifier to write before a member with the given
+/// `access`.
+///
+/// With `Automatic`, a specifier is only written when `access` differs from
+/// the access in effect (`current_access`, initialized with the type's
+/// default access), since a C++ access specifier applies to every member
+/// that follows it. Members of unnamed unions/structs (`current_access` is
+/// `None`) get the access written before the unnamed type. Members whose
+/// access isn't recorded (`FieldAccess::None`, e.g., `LF_NESTTYPE`) don't
+/// change the access in effect.
+fn access_specifier(
+    fmt_configuration: &DataFormatConfiguration,
+    access: FieldAccess,
+    current_access: Option<&Cell<FieldAccess>>,
+) -> FieldAccess {
+    match fmt_configuration.print_access_specifiers {
+        AccessSpecifierReconstructionFlavor::Disabled => FieldAccess::None,
+        AccessSpecifierReconstructionFlavor::Always => access,
+        AccessSpecifierReconstructionFlavor::Automatic => match current_access {
+            Some(current_access)
+                if access != FieldAccess::None && current_access.get() != access =>
+            {
+                current_access.set(access);
+                access
+            }
+            _ => FieldAccess::None,
+        },
+    }
+}
+
+/// Access specifier to write before an unnamed union/struct, whose members
+/// get the access of its first member. Only needed with `Automatic`, the
+/// other flavors write specifiers on the unnamed type's members.
+fn unnamed_type_access_specifier(
+    fmt_configuration: &DataFormatConfiguration,
+    first_member_access: FieldAccess,
+    current_access: Option<&Cell<FieldAccess>>,
+) -> FieldAccess {
+    match fmt_configuration.print_access_specifiers {
+        AccessSpecifierReconstructionFlavor::Automatic => {
+            access_specifier(fmt_configuration, first_member_access, current_access)
+        }
+        _ => FieldAccess::None,
+    }
+}
+
 pub fn resolve_complete_type_index(
     forwarder_to_complete_type: &dashmap::DashMap<pdb::TypeIndex, pdb::TypeIndex>,
     type_index: pdb::TypeIndex,
@@ -1094,18 +1156,30 @@ fn fmt_struct_fields_recursive<W: std::fmt::Write>(
     fmt_configuration: &DataFormatConfiguration,
     fields: &[Field],
     depth: usize,
+    current_access: Option<&Cell<FieldAccess>>,
     f: &mut W,
 ) -> fmt::Result {
-    fmt_struct_fields_interleaved(fmt_configuration, fields, depth, f, |_, _| Ok(()))
+    fmt_struct_fields_interleaved(
+        fmt_configuration,
+        fields,
+        depth,
+        current_access,
+        f,
+        |_, _| Ok(()),
+    )
 }
 
 /// Writes struct fields, calling `before_group` with the index of the first
 /// field of each top-level group (a field or an unnamed union) before writing
 /// that group. Used to interleave other members in PDB declaration order.
+///
+/// `current_access` is the access in effect for the type's members (see
+/// `access_specifier`), `None` inside unnamed unions/structs.
 fn fmt_struct_fields_interleaved<W: std::fmt::Write>(
     fmt_configuration: &DataFormatConfiguration,
     fields: &[Field],
     depth: usize,
+    current_access: Option<&Cell<FieldAccess>>,
     f: &mut W,
     mut before_group: impl FnMut(usize, &mut W) -> fmt::Result,
 ) -> fmt::Result {
@@ -1168,17 +1242,7 @@ fn fmt_struct_fields_interleaved<W: std::fmt::Write>(
             write!(
                 f,
                 "{}",
-                match fmt_configuration.print_access_specifiers {
-                    AccessSpecifierReconstructionFlavor::Disabled => &FieldAccess::None,
-                    AccessSpecifierReconstructionFlavor::Always => &field.access,
-                    AccessSpecifierReconstructionFlavor::Automatic => {
-                        if field.access != FieldAccess::Public {
-                            &field.access
-                        } else {
-                            &FieldAccess::None
-                        }
-                    }
-                }
+                access_specifier(fmt_configuration, field.access, current_access)
             )?;
             write!(
                 f,
@@ -1197,15 +1261,26 @@ fn fmt_struct_fields_interleaved<W: std::fmt::Write>(
         } else {
             writeln!(
                 f,
-                "{}union{}{{",
+                "{}{}union{}{{",
                 &indentation,
+                unnamed_type_access_specifier(
+                    fmt_configuration,
+                    fields[union_range.start].access,
+                    current_access
+                ),
                 if fmt_configuration.print_brackets_new_line {
                     format!("\n{}", &indentation)
                 } else {
                     String::from(" ")
                 }
             )?;
-            fmt_union_fields_recursive(fmt_configuration, &fields[union_range], depth + 1, f)?;
+            fmt_union_fields_recursive(
+                fmt_configuration,
+                &fields[union_range],
+                depth + 1,
+                None,
+                f,
+            )?;
             writeln!(f, "{}}};", &indentation)?;
             last_field = None;
         }
@@ -1324,9 +1399,17 @@ fn fmt_union_fields_recursive<W: std::fmt::Write>(
     fmt_configuration: &DataFormatConfiguration,
     fields: &[Field],
     depth: usize,
+    current_access: Option<&Cell<FieldAccess>>,
     f: &mut W,
 ) -> fmt::Result {
-    fmt_union_fields_interleaved(fmt_configuration, fields, depth, f, |_, _| Ok(()))
+    fmt_union_fields_interleaved(
+        fmt_configuration,
+        fields,
+        depth,
+        current_access,
+        f,
+        |_, _| Ok(()),
+    )
 }
 
 /// Union counterpart of `fmt_struct_fields_interleaved`: `before_group` is
@@ -1336,6 +1419,7 @@ fn fmt_union_fields_interleaved<W: std::fmt::Write>(
     fmt_configuration: &DataFormatConfiguration,
     fields: &[Field],
     depth: usize,
+    current_access: Option<&Cell<FieldAccess>>,
     f: &mut W,
     mut before_group: impl FnMut(usize, &mut W) -> fmt::Result,
 ) -> fmt::Result {
@@ -1357,17 +1441,7 @@ fn fmt_union_fields_interleaved<W: std::fmt::Write>(
             write!(
                 f,
                 "{}",
-                match fmt_configuration.print_access_specifiers {
-                    AccessSpecifierReconstructionFlavor::Disabled => &FieldAccess::None,
-                    AccessSpecifierReconstructionFlavor::Always => &field.access,
-                    AccessSpecifierReconstructionFlavor::Automatic => {
-                        if field.access != FieldAccess::Public {
-                            &field.access
-                        } else {
-                            &FieldAccess::None
-                        }
-                    }
-                }
+                access_specifier(fmt_configuration, field.access, current_access)
             )?;
             write!(
                 f,
@@ -1385,15 +1459,26 @@ fn fmt_union_fields_interleaved<W: std::fmt::Write>(
         } else {
             writeln!(
                 f,
-                "{}struct{}{{",
+                "{}{}struct{}{{",
                 &indentation,
+                unnamed_type_access_specifier(
+                    fmt_configuration,
+                    fields[struct_range.start].access,
+                    current_access
+                ),
                 if fmt_configuration.print_brackets_new_line {
                     format!("\n{}", &indentation)
                 } else {
                     String::from(" ")
                 }
             )?;
-            fmt_struct_fields_recursive(fmt_configuration, &fields[struct_range], depth + 1, f)?;
+            fmt_struct_fields_recursive(
+                fmt_configuration,
+                &fields[struct_range],
+                depth + 1,
+                None,
+                f,
+            )?;
             writeln!(f, "{}}};", &indentation)?;
         }
     }
@@ -1466,6 +1551,8 @@ pub struct DataFormatConfiguration {
     /// Wrap types in `namespace` blocks instead of declaring them with their
     /// qualified names.
     pub reconstruct_namespaces: bool,
+    /// Print `override` on virtual methods overriding a base class method.
+    pub print_override_specifiers: bool,
     pub print_offset_info: bool,
     pub print_brackets_new_line: bool,
 }
@@ -1479,6 +1566,7 @@ impl Default for DataFormatConfiguration {
             ignore_compiler_generated_methods: true,
             preserve_member_order: true,
             reconstruct_namespaces: true,
+            print_override_specifiers: true,
             print_offset_info: true,
             print_brackets_new_line: false,
         }

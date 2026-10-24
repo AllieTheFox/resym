@@ -3,17 +3,17 @@ source: resym_core/tests/type_reconstruction.rs
 expression: reconstructed_type
 ---
 class resym_test::ClassWithRefsAndStaticsTest {
-  private: int32_t& iref;
-  private: const int32_t& ciref;
-  private: int32_t* iptr;
-  private: const int32_t* ciptr;
-  private: bool& bref;
-  private: const bool& cbref;
-  private: bool* bptr;
-  private: const bool* cbptr;
-  private: static int32_t sint;
-  private: static bool sbool;
+  int32_t& iref;
+  const int32_t& ciref;
+  int32_t* iptr;
+  const int32_t* ciptr;
+  bool& bref;
+  const bool& cbref;
+  bool* bptr;
+  const bool* cbptr;
+  static int32_t sint;
+  static bool sbool;
   
   public: ClassWithRefsAndStaticsTest();
-  public: void __autoclassinit2(uint64_t);
+  void __autoclassinit2(uint64_t);
 };

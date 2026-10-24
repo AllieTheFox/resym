@@ -23,7 +23,7 @@ pub struct StaticField<'p> {
     pub access: FieldAccess,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FieldAccess {
     None,
     Private,

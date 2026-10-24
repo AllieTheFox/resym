@@ -12,12 +12,16 @@
 - Allow navigating type and symbol lists with the keyboard via arrow up/down and page up/down (proposal by @0xeb)
 - Add a setting to print class and union members in PDB declaration order instead of grouping fields before methods (`-m`/`--preserve-member-order` in `resymc`)
 - Print a class' own vftable pointer (`__vftable`) and the vftable offset of each virtual method that introduces a vftable entry
+- Add a setting to print `override` on virtual methods that reuse a base class' vftable entry (`-o`/`--print-override-specifiers` in `resymc`)
 - Reconstruct nested types and type aliases inside the class or union that declares them
 - Add a setting to declare types inside `namespace` blocks instead of using qualified names (`-n`/`--reconstruct-namespaces` in `resymc`)
+- Add a setting to print the parameter names of class and union methods, read from the symbols of their implementation (`-A`/`--print-argument-names` in `resymc`)
 
 ### Changed
 
 - Hexadecimal integer values are now displayed with the appropriate number of digits (@HaydnTrigg)
+- "Automatic" access specifiers are only printed when the access changes, and no longer leave public members of a `class` (or members following a non-public one) without a specifier
+- Parameter names in symbol dumps are read from the parameters of each function only: locals, `...`, and unnamed (`__formal`) parameters are no longer printed as parameter names, function pointer parameters keep a valid syntax, and x86 debug builds (`S_BPREL32`) now get names
 
 ## [0.4.0] - 2024-03-24
 

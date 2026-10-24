@@ -32,4 +32,4 @@ expression: module_diff.data
  void __scrt_main_policy::set_app_type(); // RVA=0x12140 CodeSize=0x13
  void __scrt_file_policy::set_commode(); // RVA=0x12160 CodeSize=0x1d
  void __scrt_file_policy::set_fmode(); // RVA=0x12190 CodeSize=0x15
- uint32_t mainCRTStartup(void* __formal); // RVA=0x121b0 CodeSize=0x13
+ uint32_t mainCRTStartup(void*); // RVA=0x121b0 CodeSize=0x13

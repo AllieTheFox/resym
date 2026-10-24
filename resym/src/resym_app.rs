@@ -309,6 +309,8 @@ impl ResymApp {
                                             self.settings.app_settings.ignore_compiler_generated_methods,
                                             self.settings.app_settings.preserve_member_order,
                                             self.settings.app_settings.reconstruct_namespaces,
+                                            self.settings.app_settings.print_override_specifiers,
+                                            self.settings.app_settings.print_argument_names,
                                         ),
                                     ) {
                                         log::error!("Failed to reconstruct type: {}", err);
@@ -332,6 +334,8 @@ impl ResymApp {
                                             self.settings.app_settings.ignore_compiler_generated_methods,
                                             self.settings.app_settings.preserve_member_order,
                                             self.settings.app_settings.reconstruct_namespaces,
+                                            self.settings.app_settings.print_override_specifiers,
+                                            self.settings.app_settings.print_argument_names,
                                         ))
                                     {
                                         log::error!("Failed to reconstruct type diff: {}", err);
@@ -560,6 +564,8 @@ impl ResymApp {
                                         self.settings.app_settings.ignore_compiler_generated_methods,
                                         self.settings.app_settings.preserve_member_order,
                                         self.settings.app_settings.reconstruct_namespaces,
+                                        self.settings.app_settings.print_override_specifiers,
+                                        self.settings.app_settings.print_argument_names,
                                     ))
                             {
                                 log::error!("Failed to reconstruct type: {}", err);

@@ -2,6 +2,7 @@ pub mod backend;
 pub mod diffing;
 mod error;
 pub mod frontend;
+mod parameter_names;
 pub mod pdb_file;
 pub mod pdb_types;
 pub mod rayon_utils;

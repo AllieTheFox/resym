@@ -107,6 +107,8 @@ impl ResymcApp {
         ignore_compiler_generated_methods: bool,
         preserve_member_order: bool,
         reconstruct_namespaces: bool,
+        print_override_specifiers: bool,
+        print_argument_names: bool,
         highlight_syntax: bool,
         output_file_path: Option<PathBuf>,
     ) -> Result<()> {
@@ -140,6 +142,8 @@ impl ResymcApp {
                     ignore_compiler_generated_methods,
                     preserve_member_order,
                     reconstruct_namespaces,
+                    print_override_specifiers,
+                    print_argument_names,
                 ))?;
         } else {
             self.backend
@@ -156,6 +160,8 @@ impl ResymcApp {
                     ignore_compiler_generated_methods,
                     preserve_member_order,
                     reconstruct_namespaces,
+                    print_override_specifiers,
+                    print_argument_names,
                 ))?;
         }
         // Wait for the backend to finish filtering types
@@ -202,6 +208,8 @@ impl ResymcApp {
         ignore_compiler_generated_methods: bool,
         preserve_member_order: bool,
         reconstruct_namespaces: bool,
+        print_override_specifiers: bool,
+        print_argument_names: bool,
         highlight_syntax: bool,
         output_file_path: Option<PathBuf>,
     ) -> Result<()> {
@@ -258,6 +266,8 @@ impl ResymcApp {
             ignore_compiler_generated_methods,
             preserve_member_order,
             reconstruct_namespaces,
+            print_override_specifiers,
+            print_argument_names,
         ))?;
         // Wait for the backend to finish
         if let FrontendCommand::DiffResult(reconstructed_type_diff_result) =
@@ -825,6 +835,8 @@ mod tests {
                 false, // ignore_compiler_generated_methods
                 false, // preserve_member_order
                 false, // reconstruct_namespaces
+                false, // print_override_specifiers
+                false, // print_argument_names
                 false, // highlight_syntax
                 None
             )
@@ -853,6 +865,8 @@ mod tests {
                 true,  // ignore_compiler_generated_methods
                 true,  // preserve_member_order
                 true,  // reconstruct_namespaces
+                true,  // print_override_specifiers
+                true,  // print_argument_names
                 true,  // highlight_syntax
                 None
             )
@@ -884,6 +898,8 @@ mod tests {
                 false, // ignore_compiler_generated_methods
                 false, // preserve_member_order
                 false, // reconstruct_namespaces
+                false, // print_override_specifiers
+                false, // print_argument_names
                 false, // highlight_syntax
                 Some(output_path.clone()),
             )
@@ -938,6 +954,8 @@ mod tests {
                 false, // ignore_compiler_generated_methods
                 false, // preserve_member_order
                 false, // reconstruct_namespaces
+                false, // print_override_specifiers
+                false, // print_argument_names
                 false, // highlight_syntax
                 None   // output_file_path
             )
@@ -967,6 +985,8 @@ mod tests {
                 false, // ignore_compiler_generated_methods
                 true,  // preserve_member_order
                 true,  // reconstruct_namespaces
+                true,  // print_override_specifiers
+                true,  // print_argument_names
                 true,  // highlight_syntax
                 None   // output_file_path
             )
@@ -1001,6 +1021,8 @@ mod tests {
                 false, // ignore_compiler_generated_methods
                 false, // preserve_member_order
                 false, // reconstruct_namespaces
+                false, // print_override_specifiers
+                false, // print_argument_names
                 false, // highlight_syntax
                 Some(output_path.clone()),
             )

@@ -125,6 +125,14 @@ impl SettingsComponent {
                             &mut self.app_settings.reconstruct_namespaces,
                             "Reconstruct namespaces",
                         );
+                        ui.checkbox(
+                            &mut self.app_settings.print_override_specifiers,
+                            "Print override specifiers",
+                        );
+                        ui.checkbox(
+                            &mut self.app_settings.print_argument_names,
+                            "Print argument names",
+                        );
                         ui.label(
                             egui::RichText::new("Print size comments")
                                 .color(ui.style().visuals.widgets.inactive.text_color()),

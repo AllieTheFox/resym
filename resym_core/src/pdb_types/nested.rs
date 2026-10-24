@@ -1,6 +1,10 @@
-use std::fmt::{self, Write as _};
+use std::{
+    cell::Cell,
+    fmt::{self, Write as _},
+};
 
 use super::{
+    access_specifier,
     class::Class,
     enumeration::Enum,
     field::FieldAccess,
@@ -9,8 +13,8 @@ use super::{
     primitive_types::PrimitiveReconstructionFlavor,
     resolve_complete_type_index, type_name,
     union::Union,
-    AccessSpecifierReconstructionFlavor, DataFormatConfiguration, NeededTypeSet,
-    ReconstructibleTypeData, TypeForwarder,
+    DataFormatConfiguration, MethodParameterNames, NeededTypeSet, ReconstructibleTypeData,
+    TypeForwarder,
 };
 use crate::error::Result;
 
@@ -155,6 +159,19 @@ impl<'p> NestedDeclaration<'p> {
         }))
     }
 
+    /// Sets the parameter names of the methods of the nested type.
+    pub fn assign_parameter_names(&mut self, parameter_names: &MethodParameterNames) {
+        match &mut self.kind {
+            NestedDeclarationKind::Class { class, .. } => {
+                class.assign_parameter_names(parameter_names)
+            }
+            NestedDeclarationKind::Union { union, .. } => {
+                union.assign_parameter_names(parameter_names)
+            }
+            _ => {}
+        }
+    }
+
     /// Calls `f` with the fully qualified name of this declaration and of
     /// every type declared inside it. Typedefs aren't types and are skipped.
     pub fn visit_type_names(&self, f: &mut impl FnMut(&str)) {
@@ -178,12 +195,12 @@ impl<'p> NestedDeclaration<'p> {
     }
 
     /// Writes the declaration one indentation level deeper than its parent's
-    /// members. `is_private_by_default` indicates if the parent is a `class`,
-    /// whose members are private unless an access specifier says otherwise.
+    /// members. `current_access` is the access in effect in the parent (see
+    /// `access_specifier`).
     pub fn reconstruct(
         &self,
         fmt_configuration: &DataFormatConfiguration,
-        is_private_by_default: bool,
+        current_access: &Cell<FieldAccess>,
         f: &mut impl std::fmt::Write,
     ) -> fmt::Result {
         let mut declaration = String::new();
@@ -208,17 +225,7 @@ impl<'p> NestedDeclaration<'p> {
             } => writeln!(declaration, "typedef {type_left} {name}{type_right};")?,
         }
 
-        let access = match fmt_configuration.print_access_specifiers {
-            AccessSpecifierReconstructionFlavor::Disabled => &FieldAccess::None,
-            AccessSpecifierReconstructionFlavor::Always => &self.access,
-            AccessSpecifierReconstructionFlavor::Automatic => {
-                if is_private_by_default || self.access != FieldAccess::Public {
-                    &self.access
-                } else {
-                    &FieldAccess::None
-                }
-            }
-        };
+        let access = access_specifier(fmt_configuration, self.access, Some(current_access));
         for (i, line) in declaration.lines().enumerate() {
             if i == 0 {
                 writeln!(f, "  {access}{line}")?;

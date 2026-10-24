@@ -180,6 +180,8 @@ fn test_type_reconstruction_internal(
                 false, // ignore_compiler_generated_methods
                 false, // preserve_member_order
                 false, // reconstruct_namespaces
+                false, // print_override_specifiers
+                false, // print_argument_names
             )
             .unwrap_or_else(|_| panic!("reconstruct type: {test_case_type_name}"));
 

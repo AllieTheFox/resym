@@ -1,14 +1,14 @@
-use std::fmt;
+use std::{cell::Cell, fmt};
 
 use super::{
+    access_specifier,
     field::{FieldAccess, StaticField},
     fmt_struct_fields_interleaved, fmt_struct_fields_recursive,
     nested::NestedDeclaration,
     primitive_types::PrimitiveReconstructionFlavor,
-    resolve_complete_type_index, type_bitfield_info, type_name, type_size,
-    AccessSpecifierReconstructionFlavor, DataFormatConfiguration, Field, MemberKind, MemberRef,
-    Method, NeededTypeSet, ReconstructibleTypeData, Result, ResymCoreError, SizePrintFlavor,
-    TypeForwarder,
+    resolve_complete_type_index, type_bitfield_info, type_name, type_size, DataFormatConfiguration,
+    Field, MemberKind, MemberRef, Method, MethodParameterNames, NeededTypeSet,
+    ReconstructibleTypeData, Result, ResymCoreError, SizePrintFlavor, TypeForwarder,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -411,33 +411,46 @@ impl Class<'_> {
             )?;
         }
 
+        // Access in effect for the next member (see `access_specifier`)
+        let current_access = Cell::new(if self.kind == pdb::ClassKind::Class {
+            FieldAccess::Private
+        } else {
+            FieldAccess::Public
+        });
+
         // Nested declarations (written in PDB order with the other members
         // when preserving member order)
         if !fmt_configuration.preserve_member_order && !self.nested_types.is_empty() {
             writeln!(f, "  ")?;
             for nested in &self.nested_types {
-                nested.reconstruct(fmt_configuration, self.kind == pdb::ClassKind::Class, f)?;
+                nested.reconstruct(fmt_configuration, &current_access, f)?;
             }
         }
 
         self.fmt_vftable_pointer(fmt_configuration, f)?;
 
         if fmt_configuration.preserve_member_order {
-            self.fmt_members_in_order(fmt_configuration, f)?;
+            self.fmt_members_in_order(fmt_configuration, &current_access, f)?;
         } else {
             // Dump fields while detecting unnamed structs and unions
-            fmt_struct_fields_recursive(fmt_configuration, &self.fields, 1, f)?;
+            fmt_struct_fields_recursive(
+                fmt_configuration,
+                &self.fields,
+                1,
+                Some(&current_access),
+                f,
+            )?;
 
             // Static fields
             for field in &self.static_fields {
-                self.fmt_static_field(fmt_configuration, field, f)?;
+                Self::fmt_static_field(fmt_configuration, field, &current_access, f)?;
             }
 
             if !self.instance_methods.is_empty() {
                 writeln!(f, "  ")?;
                 for method in &self.instance_methods {
                     if Self::is_method_shown(fmt_configuration, method) {
-                        self.fmt_instance_method(fmt_configuration, method, f)?;
+                        self.fmt_instance_method(fmt_configuration, method, &current_access, f)?;
                     }
                 }
             }
@@ -445,7 +458,7 @@ impl Class<'_> {
             if !self.static_methods.is_empty() {
                 writeln!(f, "  ")?;
                 for method in &self.static_methods {
-                    self.fmt_static_method(fmt_configuration, method, f)?;
+                    Self::fmt_static_method(fmt_configuration, method, &current_access, f)?;
                 }
             }
         }
@@ -481,6 +494,24 @@ impl<'p> Class<'p> {
             self.members
                 .push(MemberRef::InstanceMethod(self.instance_methods.len()));
             self.instance_methods.push(method);
+        }
+    }
+
+    /// Sets the parameter names of this class' methods and of the methods of
+    /// its nested types.
+    pub(crate) fn assign_parameter_names(&mut self, parameter_names: &MethodParameterNames) {
+        let methods = self
+            .instance_methods
+            .iter_mut()
+            .chain(self.static_methods.iter_mut());
+        for method in methods {
+            let key = (format!("{}::{}", self.name, method.name), method.type_index);
+            if let Some(names) = parameter_names.get(&key) {
+                method.parameter_names = names.clone();
+            }
+        }
+        for nested in &mut self.nested_types {
+            nested.assign_parameter_names(parameter_names);
         }
     }
 
@@ -526,6 +557,7 @@ impl<'p> Class<'p> {
     fn fmt_members_in_order(
         &self,
         fmt_configuration: &DataFormatConfiguration,
+        current_access: &Cell<FieldAccess>,
         f: &mut impl std::fmt::Write,
     ) -> fmt::Result {
         let mut field_positions = vec![0; self.fields.len()];
@@ -537,25 +569,34 @@ impl<'p> Class<'p> {
 
         let mut next_position = 0;
         let mut last_kind = MemberKind::Data;
-        fmt_struct_fields_interleaved(fmt_configuration, &self.fields, 1, f, |field_index, f| {
-            self.fmt_non_field_members(
-                fmt_configuration,
-                field_positions[field_index],
-                &mut next_position,
-                &mut last_kind,
-                f,
-            )?;
-            if last_kind != MemberKind::Data {
-                writeln!(f, "  ")?;
-            }
-            last_kind = MemberKind::Data;
-            Ok(())
-        })?;
+        fmt_struct_fields_interleaved(
+            fmt_configuration,
+            &self.fields,
+            1,
+            Some(current_access),
+            f,
+            |field_index, f| {
+                self.fmt_non_field_members(
+                    fmt_configuration,
+                    field_positions[field_index],
+                    &mut next_position,
+                    &mut last_kind,
+                    current_access,
+                    f,
+                )?;
+                if last_kind != MemberKind::Data {
+                    writeln!(f, "  ")?;
+                }
+                last_kind = MemberKind::Data;
+                Ok(())
+            },
+        )?;
         self.fmt_non_field_members(
             fmt_configuration,
             self.members.len(),
             &mut next_position,
             &mut last_kind,
+            current_access,
             f,
         )
     }
@@ -569,6 +610,7 @@ impl<'p> Class<'p> {
         end_position: usize,
         next_position: &mut usize,
         last_kind: &mut MemberKind,
+        current_access: &Cell<FieldAccess>,
         f: &mut impl std::fmt::Write,
     ) -> fmt::Result {
         while *next_position < end_position {
@@ -591,20 +633,27 @@ impl<'p> Class<'p> {
 
             match member {
                 MemberRef::Field(_) => unreachable!("instance fields are skipped above"),
-                MemberRef::NestedType(index) => self.nested_types[index].reconstruct(
+                MemberRef::NestedType(index) => {
+                    self.nested_types[index].reconstruct(fmt_configuration, current_access, f)?
+                }
+                MemberRef::StaticField(index) => Self::fmt_static_field(
                     fmt_configuration,
-                    self.kind == pdb::ClassKind::Class,
+                    &self.static_fields[index],
+                    current_access,
                     f,
                 )?,
-                MemberRef::StaticField(index) => {
-                    self.fmt_static_field(fmt_configuration, &self.static_fields[index], f)?
-                }
-                MemberRef::InstanceMethod(index) => {
-                    self.fmt_instance_method(fmt_configuration, &self.instance_methods[index], f)?
-                }
-                MemberRef::StaticMethod(index) => {
-                    self.fmt_static_method(fmt_configuration, &self.static_methods[index], f)?
-                }
+                MemberRef::InstanceMethod(index) => self.fmt_instance_method(
+                    fmt_configuration,
+                    &self.instance_methods[index],
+                    current_access,
+                    f,
+                )?,
+                MemberRef::StaticMethod(index) => Self::fmt_static_method(
+                    fmt_configuration,
+                    &self.static_methods[index],
+                    current_access,
+                    f,
+                )?,
             }
         }
 
@@ -612,25 +661,15 @@ impl<'p> Class<'p> {
     }
 
     fn fmt_static_field(
-        &self,
         fmt_configuration: &DataFormatConfiguration,
         field: &StaticField,
+        current_access: &Cell<FieldAccess>,
         f: &mut impl std::fmt::Write,
     ) -> fmt::Result {
         writeln!(
             f,
             "  {}static {} {}{};",
-            match fmt_configuration.print_access_specifiers {
-                AccessSpecifierReconstructionFlavor::Disabled => &FieldAccess::None,
-                AccessSpecifierReconstructionFlavor::Always => &field.access,
-                AccessSpecifierReconstructionFlavor::Automatic => {
-                    if self.kind == pdb::ClassKind::Class || field.access != FieldAccess::Public {
-                        &field.access
-                    } else {
-                        &FieldAccess::None
-                    }
-                }
-            },
+            access_specifier(fmt_configuration, field.access, Some(current_access)),
             field.type_left,
             &field.name,
             field.type_right,
@@ -641,23 +680,14 @@ impl<'p> Class<'p> {
         &self,
         fmt_configuration: &DataFormatConfiguration,
         method: &Method,
+        current_access: &Cell<FieldAccess>,
         f: &mut impl std::fmt::Write,
     ) -> fmt::Result {
         let method_has_class_name = method.name == self.name.as_str().into();
         writeln!(
             f,
-            "  {}{}{}{}{}({}){}{}{}{};{}",
-            match fmt_configuration.print_access_specifiers {
-                AccessSpecifierReconstructionFlavor::Disabled => &FieldAccess::None,
-                AccessSpecifierReconstructionFlavor::Always => &method.access,
-                AccessSpecifierReconstructionFlavor::Automatic => {
-                    if self.kind == pdb::ClassKind::Class || method.access != FieldAccess::Public {
-                        &method.access
-                    } else {
-                        &FieldAccess::None
-                    }
-                }
-            },
+            "  {}{}{}{}{}({}){}{}{}{}{};{}",
+            access_specifier(fmt_configuration, method.access, Some(current_access)),
             if method.is_virtual { "virtual " } else { "" },
             if method.is_ctor || method.is_dtor || method_has_class_name {
                 ""
@@ -674,15 +704,15 @@ impl<'p> Class<'p> {
                 ""
             },
             &method.name,
-            method
-                .arguments
-                .iter()
-                .map(|(type_left, type_right)| format!("{type_left}{type_right}"))
-                .collect::<Vec<String>>()
-                .join(", "),
+            method.fmt_arguments(),
             method.return_type_name.1,
             if method.is_const { " const" } else { "" },
             if method.is_volatile { " volatile" } else { "" },
+            if fmt_configuration.print_override_specifiers && method.is_override {
+                " override"
+            } else {
+                ""
+            },
             if method.is_pure_virtual { " = 0" } else { "" },
             match method.vtable_offset {
                 Some(vtable_offset) if fmt_configuration.print_offset_info => {
@@ -694,25 +724,15 @@ impl<'p> Class<'p> {
     }
 
     fn fmt_static_method(
-        &self,
         fmt_configuration: &DataFormatConfiguration,
         method: &Method,
+        current_access: &Cell<FieldAccess>,
         f: &mut impl std::fmt::Write,
     ) -> fmt::Result {
         writeln!(
             f,
             "  {}static {}{}{}({}){}{}{};",
-            match fmt_configuration.print_access_specifiers {
-                AccessSpecifierReconstructionFlavor::Disabled => &FieldAccess::None,
-                AccessSpecifierReconstructionFlavor::Always => &method.access,
-                AccessSpecifierReconstructionFlavor::Automatic => {
-                    if self.kind == pdb::ClassKind::Class || method.access != FieldAccess::Public {
-                        &method.access
-                    } else {
-                        &FieldAccess::None
-                    }
-                }
-            },
+            access_specifier(fmt_configuration, method.access, Some(current_access)),
             method.return_type_name.0,
             if method.return_type_name.1.is_empty() {
                 " "
@@ -720,12 +740,7 @@ impl<'p> Class<'p> {
                 ""
             },
             &method.name,
-            method
-                .arguments
-                .iter()
-                .map(|(type_left, type_right)| format!("{type_left}{type_right}"))
-                .collect::<Vec<String>>()
-                .join(", "),
+            method.fmt_arguments(),
             method.return_type_name.1,
             if method.is_const { " const" } else { "" },
             if method.is_volatile { " volatile" } else { "" },

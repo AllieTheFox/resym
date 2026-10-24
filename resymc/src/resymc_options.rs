@@ -75,6 +75,12 @@ pub enum ResymcOptions {
         /// Wrap types in `namespace` blocks instead of using qualified names
         #[structopt(short = "n", long)]
         reconstruct_namespaces: bool,
+        /// Print `override` on virtual methods overriding a base class method
+        #[structopt(short = "o", long)]
+        print_override_specifiers: bool,
+        /// Print parameter names of methods when the PDB has them
+        #[structopt(short = "A", long)]
+        print_argument_names: bool,
         /// Highlight C++ output
         #[structopt(short = "H", long)]
         highlight_syntax: bool,
@@ -118,6 +124,12 @@ pub enum ResymcOptions {
         /// Wrap types in `namespace` blocks instead of using qualified names
         #[structopt(short = "n", long)]
         reconstruct_namespaces: bool,
+        /// Print `override` on virtual methods overriding a base class method
+        #[structopt(short = "o", long)]
+        print_override_specifiers: bool,
+        /// Print parameter names of methods when the PDB has them
+        #[structopt(short = "A", long)]
+        print_argument_names: bool,
         /// Highlight C++ output
         #[structopt(short = "H", long)]
         highlight_syntax: bool,
@@ -168,6 +180,12 @@ pub enum ResymcOptions {
         /// Wrap types in `namespace` blocks instead of using qualified names
         #[structopt(short = "n", long)]
         reconstruct_namespaces: bool,
+        /// Print `override` on virtual methods overriding a base class method
+        #[structopt(short = "o", long)]
+        print_override_specifiers: bool,
+        /// Print parameter names of methods when the PDB has them
+        #[structopt(short = "A", long)]
+        print_argument_names: bool,
         /// Highlight C++ output and add/deleted lines
         #[structopt(short = "H", long)]
         highlight_syntax: bool,

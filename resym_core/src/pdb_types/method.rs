@@ -10,8 +10,16 @@ pub struct Method<'p> {
     pub name: pdb::RawString<'p>,
     pub return_type_name: (String, String),
     pub arguments: Vec<(String, String)>,
+    /// Names of the declared parameters, when found in the symbols of the
+    /// method's implementation (`None` for unnamed parameters)
+    pub parameter_names: Vec<Option<String>>,
+    /// `LF_MFUNCTION` describing the method
+    pub type_index: pdb::TypeIndex,
     pub is_virtual: bool,
     pub is_pure_virtual: bool,
+    /// Virtual method that reuses a base class' vftable entry (`CV_MTvirtual`
+    /// or `CV_MTpurevirt`, as opposed to the "intro" variants)
+    pub is_override: bool,
     pub is_ctor: bool,
     pub is_dtor: bool,
     pub is_const: bool,
@@ -64,6 +72,7 @@ impl<'p> Method<'p> {
                     | attributes.is_intro_virtual(),
                 // 0x06 = pure intro
                 is_pure_virtual: attributes.is_pure_virtual() || Method::get_method_properties(attributes) == 0x06,
+                is_override: attributes.is_virtual() || attributes.is_pure_virtual(),
                 is_ctor: data.attributes.is_constructor()
                     || data.attributes.is_constructor_with_virtual_bases(),
                 is_dtor: name.to_string().starts_with('~'),
@@ -83,6 +92,8 @@ impl<'p> Method<'p> {
                 },
                 is_compiler_generated: Method::get_is_compiler_generated(attributes),
                 vtable_offset: None,
+                parameter_names: Vec::new(),
+                type_index,
                 access: FieldAccess::from_field_attribute(attributes.access()),
             }),
 
@@ -93,6 +104,22 @@ impl<'p> Method<'p> {
                 ))
             }
         }
+    }
+
+    /// Formats the argument list (without parentheses), with parameter names
+    /// when known.
+    pub fn fmt_arguments(&self) -> String {
+        self.arguments
+            .iter()
+            .enumerate()
+            .map(|(i, (type_left, type_right))| {
+                match self.parameter_names.get(i).and_then(Option::as_ref) {
+                    Some(name) => format!("{type_left} {name}{type_right}"),
+                    None => format!("{type_left}{type_right}"),
+                }
+            })
+            .collect::<Vec<String>>()
+            .join(", ")
     }
 
     pub fn find_func_modifier(
