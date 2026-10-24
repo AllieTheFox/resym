@@ -1,14 +1,14 @@
 use std::{cell::Cell, fmt};
 
 use super::{
-    access_specifier,
+    access_specifier, class_kind_keyword,
     field::{FieldAccess, StaticField},
     fmt_struct_fields_interleaved, fmt_struct_fields_recursive,
     nested::NestedDeclaration,
-    primitive_types::PrimitiveReconstructionFlavor,
     resolve_complete_type_index, type_bitfield_info, type_name, type_size, DataFormatConfiguration,
-    Field, MemberKind, MemberRef, Method, MethodParameterNames, NeededTypeSet,
+    Field, MemberKind, MemberRef, Method, MethodImplementations, NeededTypeSet,
     ReconstructibleTypeData, Result, ResymCoreError, SizePrintFlavor, TypeForwarder,
+    TypeNameFlavor,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -106,7 +106,7 @@ impl<'p> Class<'p> {
         type_finder: &pdb::TypeFinder<'p>,
         type_forwarder: &TypeForwarder,
         type_index: pdb::TypeIndex,
-        primitive_flavor: &PrimitiveReconstructionFlavor,
+        type_name_flavor: &TypeNameFlavor,
         needed_types: &mut NeededTypeSet,
     ) -> Result<()> {
         // Resolve the complete type's index, if present in the PDB
@@ -118,7 +118,7 @@ impl<'p> Class<'p> {
                         type_finder,
                         type_forwarder,
                         field,
-                        primitive_flavor,
+                        type_name_flavor,
                         needed_types,
                     )?;
                 }
@@ -129,7 +129,7 @@ impl<'p> Class<'p> {
                         type_finder,
                         type_forwarder,
                         continuation,
-                        primitive_flavor,
+                        type_name_flavor,
                         needed_types,
                     )?;
                 }
@@ -160,7 +160,7 @@ impl<'p> Class<'p> {
         type_finder: &pdb::TypeFinder<'p>,
         type_forwarder: &TypeForwarder,
         field: &pdb::TypeData<'p>,
-        primitive_flavor: &PrimitiveReconstructionFlavor,
+        type_name_flavor: &TypeNameFlavor,
         needed_types: &mut NeededTypeSet,
     ) -> Result<()> {
         match field {
@@ -172,7 +172,7 @@ impl<'p> Class<'p> {
                     type_finder,
                     type_forwarder,
                     complete_type_index,
-                    primitive_flavor,
+                    type_name_flavor,
                     needed_types,
                 )?;
                 let type_bitfield_info = type_bitfield_info(type_finder, complete_type_index)?;
@@ -199,7 +199,7 @@ impl<'p> Class<'p> {
                     type_finder,
                     type_forwarder,
                     complete_type_index,
-                    primitive_flavor,
+                    type_name_flavor,
                     needed_types,
                 )?;
                 let access = FieldAccess::from_field_attribute(data.attributes.access());
@@ -221,7 +221,7 @@ impl<'p> Class<'p> {
                     type_finder,
                     type_forwarder,
                     data.method_type,
-                    primitive_flavor,
+                    type_name_flavor,
                     needed_types,
                 )?;
                 method.vtable_offset = data.vtable_offset;
@@ -246,7 +246,7 @@ impl<'p> Class<'p> {
                                 type_finder,
                                 type_forwarder,
                                 method_type,
-                                primitive_flavor,
+                                type_name_flavor,
                                 needed_types,
                             )?;
                             method.vtable_offset = vtable_offset;
@@ -276,7 +276,8 @@ impl<'p> Class<'p> {
                         type_finder,
                         type_forwarder,
                         complete_base_class_type_index,
-                        primitive_flavor,
+                        // Base specifiers can't be elaborated
+                        &type_name_flavor.without_elaborated_type_specifiers(),
                         needed_types,
                     )?
                     .0,
@@ -296,7 +297,7 @@ impl<'p> Class<'p> {
                         type_finder,
                         type_forwarder,
                         complete_base_class_type_index,
-                        primitive_flavor,
+                        &type_name_flavor.without_elaborated_type_specifiers(),
                         needed_types,
                     )?
                     .0,
@@ -320,7 +321,7 @@ impl<'p> Class<'p> {
                     data,
                     type_finder,
                     type_forwarder,
-                    primitive_flavor,
+                    type_name_flavor,
                     needed_types,
                 )? {
                     self.members
@@ -360,17 +361,7 @@ impl Class<'_> {
         fmt_configuration: &DataFormatConfiguration,
         f: &mut impl std::fmt::Write,
     ) -> fmt::Result {
-        write!(
-            f,
-            "{} {}",
-            match self.kind {
-                pdb::ClassKind::Class => "class",
-                pdb::ClassKind::Struct => "struct",
-                // Not used C and C++ but well ...
-                pdb::ClassKind::Interface => "interface",
-            },
-            name
-        )?;
+        write!(f, "{} {}", class_kind_keyword(self.kind), name)?;
 
         if !self.base_classes.is_empty() {
             for (i, base) in self.base_classes.iter().enumerate() {
@@ -403,12 +394,16 @@ impl Class<'_> {
             }
         )?;
 
-        for base in &self.base_classes {
-            writeln!(
-                f,
-                "  /* {:#06x}: fields for {} */",
-                base.offset, base.type_name
-            )?;
+        if !fmt_configuration.hide_base_class_offsets {
+            for base in &self.base_classes {
+                writeln!(
+                    f,
+                    "{}/* {:#06x}: fields for {} */",
+                    fmt_configuration.indent(),
+                    base.offset,
+                    base.type_name
+                )?;
+            }
         }
 
         // Access in effect for the next member (see `access_specifier`)
@@ -421,7 +416,7 @@ impl Class<'_> {
         // Nested declarations (written in PDB order with the other members
         // when preserving member order)
         if !fmt_configuration.preserve_member_order && !self.nested_types.is_empty() {
-            writeln!(f, "  ")?;
+            fmt_configuration.fmt_separator(f)?;
             for nested in &self.nested_types {
                 nested.reconstruct(fmt_configuration, &current_access, f)?;
             }
@@ -447,7 +442,7 @@ impl Class<'_> {
             }
 
             if !self.instance_methods.is_empty() {
-                writeln!(f, "  ")?;
+                fmt_configuration.fmt_separator(f)?;
                 for method in &self.instance_methods {
                     if Self::is_method_shown(fmt_configuration, method) {
                         self.fmt_instance_method(fmt_configuration, method, &current_access, f)?;
@@ -456,7 +451,7 @@ impl Class<'_> {
             }
 
             if !self.static_methods.is_empty() {
-                writeln!(f, "  ")?;
+                fmt_configuration.fmt_separator(f)?;
                 for method in &self.static_methods {
                     Self::fmt_static_method(fmt_configuration, method, &current_access, f)?;
                 }
@@ -497,21 +492,33 @@ impl<'p> Class<'p> {
         }
     }
 
-    /// Sets the parameter names of this class' methods and of the methods of
-    /// its nested types.
-    pub(crate) fn assign_parameter_names(&mut self, parameter_names: &MethodParameterNames) {
+    /// Sets what is known about the implementations of this class' methods
+    /// and of the methods of its nested types: parameter names and/or RVAs.
+    pub(crate) fn assign_method_implementations(
+        &mut self,
+        implementations: &MethodImplementations,
+        parameter_names: bool,
+        rvas: bool,
+    ) {
         let methods = self
             .instance_methods
             .iter_mut()
             .chain(self.static_methods.iter_mut());
         for method in methods {
             let key = (format!("{}::{}", self.name, method.name), method.type_index);
-            if let Some(names) = parameter_names.get(&key) {
-                method.parameter_names = names.clone();
+            if let Some(implementation) = implementations.get(&key) {
+                if parameter_names {
+                    if let Some(names) = &implementation.parameter_names {
+                        method.parameter_names = names.clone();
+                    }
+                }
+                if rvas {
+                    method.rva = implementation.rva;
+                }
             }
         }
         for nested in &mut self.nested_types {
-            nested.assign_parameter_names(parameter_names);
+            nested.assign_method_implementations(implementations, parameter_names, rvas);
         }
     }
 
@@ -523,6 +530,10 @@ impl<'p> Class<'p> {
     /// 0 (non-polymorphic bases are moved after it), but `LF_VFUNCTAB` does
     /// not record the offset, so it is only printed when no field or
     /// non-virtual base overlaps the first pointer-sized bytes.
+    ///
+    /// It is written as a comment: the class declares virtual methods, so the
+    /// compiler adds the vfptr itself, and a `void*` member would add a second
+    /// one.
     fn fmt_vftable_pointer(
         &self,
         fmt_configuration: &DataFormatConfiguration,
@@ -532,7 +543,7 @@ impl<'p> Class<'p> {
             return Ok(());
         };
 
-        write!(f, "  ")?;
+        write!(f, "{}", fmt_configuration.indent())?;
         if fmt_configuration.print_offset_info {
             let pointer_size = pointer_size as u64;
             let is_at_offset_zero = self.fields.iter().all(|field| field.offset >= pointer_size)
@@ -545,7 +556,7 @@ impl<'p> Class<'p> {
                 write!(f, "/* {:#06x} */ ", 0)?;
             }
         }
-        writeln!(f, "void* __vftable;")
+        writeln!(f, "/* void* __vftable; */")
     }
 
     /// Writes members in PDB declaration order. Data members still go
@@ -585,7 +596,7 @@ impl<'p> Class<'p> {
                     f,
                 )?;
                 if last_kind != MemberKind::Data {
-                    writeln!(f, "  ")?;
+                    fmt_configuration.fmt_separator(f)?;
                 }
                 last_kind = MemberKind::Data;
                 Ok(())
@@ -627,7 +638,7 @@ impl<'p> Class<'p> {
                 _ => {}
             }
             if *last_kind != member.kind() {
-                writeln!(f, "  ")?;
+                fmt_configuration.fmt_separator(f)?;
             }
             *last_kind = member.kind();
 
@@ -668,7 +679,8 @@ impl<'p> Class<'p> {
     ) -> fmt::Result {
         writeln!(
             f,
-            "  {}static {} {}{};",
+            "{}{}static {} {}{};",
+            fmt_configuration.indent(),
             access_specifier(fmt_configuration, field.access, Some(current_access)),
             field.type_left,
             &field.name,
@@ -684,42 +696,43 @@ impl<'p> Class<'p> {
         f: &mut impl std::fmt::Write,
     ) -> fmt::Result {
         let method_has_class_name = method.name == self.name.as_str().into();
+        let has_return_type = !method.is_ctor && !method.is_dtor && !method_has_class_name;
         writeln!(
             f,
-            "  {}{}{}{}{}({}){}{}{}{}{};{}",
+            "{}{}{}{}{}{}{}({}){}{}{}{}{};{}",
+            fmt_configuration.indent(),
             access_specifier(fmt_configuration, method.access, Some(current_access)),
-            if method.is_virtual { "virtual " } else { "" },
-            if method.is_ctor || method.is_dtor || method_has_class_name {
-                ""
+            if method.is_virtual_printed(fmt_configuration) {
+                "virtual "
             } else {
-                &method.return_type_name.0
+                ""
             },
-            if !method.is_ctor
-                && !method.is_dtor
-                && !method_has_class_name
-                && method.return_type_name.1.is_empty()
-            {
+            if has_return_type {
+                &method.return_type_name.0
+            } else {
+                ""
+            },
+            if has_return_type && method.return_type_name.1.is_empty() {
                 " "
             } else {
                 ""
             },
+            method
+                .calling_convention_keyword(fmt_configuration)
+                .map(|keyword| format!("{keyword} "))
+                .unwrap_or_default(),
             &method.name,
             method.fmt_arguments(),
             method.return_type_name.1,
             if method.is_const { " const" } else { "" },
             if method.is_volatile { " volatile" } else { "" },
-            if fmt_configuration.print_override_specifiers && method.is_override {
+            if method.is_override_printed(fmt_configuration) {
                 " override"
             } else {
                 ""
             },
             if method.is_pure_virtual { " = 0" } else { "" },
-            match method.vtable_offset {
-                Some(vtable_offset) if fmt_configuration.print_offset_info => {
-                    format!(" /* vftable+{vtable_offset:#x} */")
-                }
-                _ => String::default(),
-            },
+            method.fmt_trailing_comments(fmt_configuration),
         )
     }
 
@@ -731,7 +744,8 @@ impl<'p> Class<'p> {
     ) -> fmt::Result {
         writeln!(
             f,
-            "  {}static {}{}{}({}){}{}{};",
+            "{}{}static {}{}{}{}({}){}{}{};{}",
+            fmt_configuration.indent(),
             access_specifier(fmt_configuration, method.access, Some(current_access)),
             method.return_type_name.0,
             if method.return_type_name.1.is_empty() {
@@ -739,11 +753,16 @@ impl<'p> Class<'p> {
             } else {
                 ""
             },
+            method
+                .calling_convention_keyword(fmt_configuration)
+                .map(|keyword| format!("{keyword} "))
+                .unwrap_or_default(),
             &method.name,
             method.fmt_arguments(),
             method.return_type_name.1,
             if method.is_const { " const" } else { "" },
             if method.is_volatile { " volatile" } else { "" },
+            method.fmt_trailing_comments(fmt_configuration),
         )
     }
 }

@@ -16,12 +16,14 @@
 - Reconstruct nested types and type aliases inside the class or union that declares them
 - Add a setting to declare types inside `namespace` blocks instead of using qualified names (`-n`/`--reconstruct-namespaces` in `resymc`)
 - Add a setting to print the parameter names of class and union methods, read from the symbols of their implementation (`-A`/`--print-argument-names` in `resymc`)
+- Add settings to print method RVAs (on by default) and calling conventions, show vftable entries as offsets or slot indices, hide base class offset comments, omit `virtual` on overrides, prefix type names with `struct`/`class`/`union`/`enum`, choose the indentation (2 or 4 spaces, or tabs), and remove blank lines between groups of members (`--print-method-rvas`, `--print-calling-conventions`, `--vftable-comment-flavor`, `--hide-base-class-offsets`, `--omit-virtual-on-overrides`, `--print-elaborated-type-specifiers`, `--indentation` and `--compact-output` in `resymc`)
 
 ### Changed
 
 - Hexadecimal integer values are now displayed with the appropriate number of digits (@HaydnTrigg)
 - "Automatic" access specifiers are only printed when the access changes, and no longer leave public members of a `class` (or members following a non-public one) without a specifier
 - Parameter names in symbol dumps are read from the parameters of each function only: locals, `...`, and unnamed (`__formal`) parameters are no longer printed as parameter names, function pointer parameters keep a valid syntax, and x86 debug builds (`S_BPREL32`) now get names
+- The vftable pointer is printed as a comment (`/* void* __vftable; */`), as the compiler adds it to classes with virtual methods: reconstructed polymorphic classes no longer have an extra pointer
 
 ## [0.4.0] - 2024-03-24
 

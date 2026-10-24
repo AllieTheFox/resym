@@ -1,6 +1,8 @@
 use resym_core::pdb_types::AccessSpecifierReconstructionFlavor;
+use resym_core::pdb_types::IndentationFlavor;
 use resym_core::pdb_types::PrimitiveReconstructionFlavor;
 use resym_core::pdb_types::SizePrintFlavor;
+use resym_core::pdb_types::VftableCommentFlavor;
 use serde::{Deserialize, Serialize};
 
 /// This struct represents the persistent settings of the application.
@@ -36,6 +38,22 @@ pub struct ResymAppSettings {
     pub print_override_specifiers: bool,
     // Print parameter names of methods when the PDB has them
     pub print_argument_names: bool,
+    // Print the RVA of methods implemented in the PDB
+    pub print_method_rvas: bool,
+    // Print the calling convention of methods
+    pub print_calling_conventions: bool,
+    #[serde(with = "VftableCommentFlavorDef")]
+    pub vftable_comment_flavor: VftableCommentFlavor,
+    // Don't print the `/* offset: fields for Base */` comments
+    pub hide_base_class_offsets: bool,
+    // Don't print `virtual` on methods printed with `override`
+    pub omit_virtual_on_overrides: bool,
+    // Prefix type names with their keyword (e.g., `struct IUnknown*`)
+    pub print_elaborated_type_specifiers: bool,
+    #[serde(with = "IndentationFlavorDef")]
+    pub indentation: IndentationFlavor,
+    // Don't separate groups of members with blank lines
+    pub compact_output: bool,
 }
 
 impl Default for ResymAppSettings {
@@ -61,6 +79,14 @@ impl Default for ResymAppSettings {
             reconstruct_namespaces: true,
             print_override_specifiers: true,
             print_argument_names: true,
+            print_method_rvas: true,
+            print_calling_conventions: false,
+            vftable_comment_flavor: VftableCommentFlavor::Offset,
+            hide_base_class_offsets: false,
+            omit_virtual_on_overrides: false,
+            print_elaborated_type_specifiers: false,
+            indentation: IndentationFlavor::TwoSpaces,
+            compact_output: false,
         }
     }
 }
@@ -91,4 +117,22 @@ enum SizePrintFlavorDef {
     Disabled,
     Comment,
     StaticAssert,
+}
+
+// Definition of the remote enum so that serde can its traits
+#[derive(Serialize, Deserialize)]
+#[serde(remote = "VftableCommentFlavor")]
+enum VftableCommentFlavorDef {
+    Disabled,
+    Offset,
+    Index,
+}
+
+// Definition of the remote enum so that serde can its traits
+#[derive(Serialize, Deserialize)]
+#[serde(remote = "IndentationFlavor")]
+enum IndentationFlavorDef {
+    TwoSpaces,
+    FourSpaces,
+    Tab,
 }

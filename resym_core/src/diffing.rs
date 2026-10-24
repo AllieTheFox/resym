@@ -10,7 +10,8 @@ use crate::{
     error::{Result, ResymCoreError},
     pdb_file::PdbFile,
     pdb_types::{
-        AccessSpecifierReconstructionFlavor, PrimitiveReconstructionFlavor, SizePrintFlavor,
+        AccessSpecifierReconstructionFlavor, IndentationFlavor, PrimitiveReconstructionFlavor,
+        SizePrintFlavor, VftableCommentFlavor,
     },
     PKG_VERSION,
 };
@@ -48,6 +49,14 @@ pub fn diff_type_by_name<'p, T>(
     reconstruct_namespaces: bool,
     print_override_specifiers: bool,
     print_argument_names: bool,
+    print_method_rvas: bool,
+    print_calling_conventions: bool,
+    vftable_comment_flavor: VftableCommentFlavor,
+    hide_base_class_offsets: bool,
+    omit_virtual_on_overrides: bool,
+    print_elaborated_type_specifiers: bool,
+    indentation: IndentationFlavor,
+    compact_output: bool,
 ) -> Result<Diff>
 where
     T: io::Seek + io::Read + std::fmt::Debug + 'p,
@@ -80,6 +89,14 @@ where
                 reconstruct_namespaces,
                 print_override_specifiers,
                 print_argument_names,
+                print_method_rvas,
+                print_calling_conventions,
+                vftable_comment_flavor,
+                hide_base_class_offsets,
+                omit_virtual_on_overrides,
+                print_elaborated_type_specifiers,
+                indentation,
+                compact_output,
             )
             .unwrap_or_default();
         let (reconstructed_type_to_tmp, _) = pdb_file_to
@@ -98,6 +115,14 @@ where
                 reconstruct_namespaces,
                 print_override_specifiers,
                 print_argument_names,
+                print_method_rvas,
+                print_calling_conventions,
+                vftable_comment_flavor,
+                hide_base_class_offsets,
+                omit_virtual_on_overrides,
+                print_elaborated_type_specifiers,
+                indentation,
+                compact_output,
             )
             .unwrap_or_default();
         if reconstructed_type_from_tmp.is_empty() && reconstructed_type_to_tmp.is_empty() {

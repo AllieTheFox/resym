@@ -2,7 +2,8 @@ use std::path::Path;
 
 use resym_core::{
     pdb_file::PdbFile, pdb_types::AccessSpecifierReconstructionFlavor,
-    pdb_types::PrimitiveReconstructionFlavor, pdb_types::SizePrintFlavor,
+    pdb_types::IndentationFlavor, pdb_types::PrimitiveReconstructionFlavor,
+    pdb_types::SizePrintFlavor, pdb_types::VftableCommentFlavor,
 };
 
 const TEST_PDB_FILE_PATH: &str = "tests/data/test.pdb";
@@ -182,6 +183,19 @@ fn test_type_reconstruction_internal(
                 false, // reconstruct_namespaces
                 false, // print_override_specifiers
                 false, // print_argument_names
+                false, // print_method_rvas
+                false, // print_calling_conventions
+                // Vftable comments were part of the offset comments
+                if print_offset_info {
+                    VftableCommentFlavor::Offset
+                } else {
+                    VftableCommentFlavor::Disabled
+                },
+                false, // hide_base_class_offsets
+                false, // omit_virtual_on_overrides
+                false, // print_elaborated_type_specifiers
+                IndentationFlavor::TwoSpaces,
+                false, // compact_output
             )
             .unwrap_or_else(|_| panic!("reconstruct type: {test_case_type_name}"));
 

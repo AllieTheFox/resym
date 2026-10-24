@@ -21,8 +21,8 @@ use primitive_types::primitive_kind_as_str;
 use union::Union;
 
 pub use primitive_types::{
-    include_headers_for_flavor, AccessSpecifierReconstructionFlavor, PrimitiveReconstructionFlavor,
-    SizePrintFlavor,
+    include_headers_for_flavor, AccessSpecifierReconstructionFlavor, IndentationFlavor,
+    PrimitiveReconstructionFlavor, SizePrintFlavor, VftableCommentFlavor,
 };
 
 use self::forward_declaration::{ForwardDeclaration, ForwardDeclarationKind};
@@ -35,22 +35,79 @@ pub type NeededTypeSet = HashSet<(pdb::TypeIndex, bool)>;
 
 pub type TypeForwarder = dashmap::DashMap<pdb::TypeIndex, pdb::TypeIndex>;
 
-/// Parameter names of methods, by qualified method name and method type
+/// Information read from the symbols of a method's implementation
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct MethodImplementation {
+    /// Names of the declared parameters (`None` for unnamed parameters), if
+    /// they match the method's type
+    pub parameter_names: Option<Vec<Option<String>>>,
+    /// RVA of the method's code
+    pub rva: Option<u32>,
+}
+
+/// Implementations of methods, by qualified method name and method type
 /// (`LF_MFUNCTION`). Methods sharing a type can only be told apart by name.
-pub type MethodParameterNames = HashMap<(String, pdb::TypeIndex), Vec<Option<String>>>;
+pub type MethodImplementations = HashMap<(String, pdb::TypeIndex), MethodImplementation>;
+
+/// Settings affecting how type names are written, applied while types are
+/// collected (unlike `DataFormatConfiguration`, applied when writing them)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TypeNameFlavor {
+    pub primitives: PrimitiveReconstructionFlavor,
+    /// Prefix class, struct, union and enum names with their keyword
+    /// (e.g., `struct IUnknown*`)
+    pub elaborated_type_specifiers: bool,
+}
+
+impl TypeNameFlavor {
+    /// Flavor with the given primitive types and no elaborated specifiers
+    pub fn new(primitives: PrimitiveReconstructionFlavor) -> Self {
+        Self {
+            primitives,
+            elaborated_type_specifiers: false,
+        }
+    }
+
+    /// Same flavor without elaborated specifiers, for names that can't have
+    /// one (e.g., base classes)
+    pub fn without_elaborated_type_specifiers(self) -> Self {
+        Self::new(self.primitives)
+    }
+
+    fn elaborate(&self, keyword: &str, name: String) -> String {
+        if self.elaborated_type_specifiers {
+            format!("{keyword} {name}")
+        } else {
+            name
+        }
+    }
+}
+
+/// Keyword declaring a class of the given kind
+pub fn class_kind_keyword(kind: pdb::ClassKind) -> &'static str {
+    match kind {
+        pdb::ClassKind::Class => "class",
+        pdb::ClassKind::Struct => "struct",
+        // Not used C and C++ but well ...
+        pdb::ClassKind::Interface => "interface",
+    }
+}
 
 /// Return a pair of strings representing the given `type_index`.
 pub fn type_name(
     type_finder: &pdb::TypeFinder,
     type_forwarder: &TypeForwarder,
     type_index: pdb::TypeIndex,
-    primitive_flavor: &PrimitiveReconstructionFlavor,
+    type_name_flavor: &TypeNameFlavor,
     needed_types: &mut NeededTypeSet,
 ) -> Result<(String, String)> {
     let (type_left, type_right) = match type_finder.find(type_index)?.parse()? {
         pdb::TypeData::Primitive(data) => {
-            let name =
-                primitive_kind_as_str(primitive_flavor, data.kind, data.indirection.is_some())?;
+            let name = primitive_kind_as_str(
+                &type_name_flavor.primitives,
+                data.kind,
+                data.indirection.is_some(),
+            )?;
 
             (name, String::default())
         }
@@ -59,29 +116,35 @@ pub fn type_name(
             needed_types.insert((type_index, false));
             // Rename unnamed anonymous tags to something unique
             let name = data.name.to_string();
-            if is_unnamed_type(&name) {
-                let name = format!("_unnamed_{type_index}");
-                (name, String::default())
+            let name = if is_unnamed_type(&name) {
+                format!("_unnamed_{type_index}")
             } else {
-                (name.into_owned(), String::default())
-            }
+                name.into_owned()
+            };
+            (
+                type_name_flavor.elaborate(class_kind_keyword(data.kind), name),
+                String::default(),
+            )
         }
 
         pdb::TypeData::Union(data) => {
             needed_types.insert((type_index, false));
             // Rename unnamed anonymous tags to something unique
             let name = data.name.to_string();
-            if is_unnamed_type(&name) {
-                let name = format!("_unnamed_{type_index}");
-                (name, String::default())
+            let name = if is_unnamed_type(&name) {
+                format!("_unnamed_{type_index}")
             } else {
-                (name.into_owned(), String::default())
-            }
+                name.into_owned()
+            };
+            (type_name_flavor.elaborate("union", name), String::default())
         }
 
         pdb::TypeData::Enumeration(data) => {
             needed_types.insert((type_index, false));
-            (data.name.to_string().into_owned(), String::default())
+            (
+                type_name_flavor.elaborate("enum", data.name.to_string().into_owned()),
+                String::default(),
+            )
         }
 
         pdb::TypeData::Pointer(data) => {
@@ -93,7 +156,7 @@ pub fn type_name(
                 type_finder,
                 type_forwarder,
                 complete_underlying_type_index,
-                primitive_flavor,
+                type_name_flavor,
                 &mut temporary_needed_types,
             )?;
 
@@ -137,7 +200,7 @@ pub fn type_name(
                 type_finder,
                 type_forwarder,
                 complete_underlying_type_index,
-                primitive_flavor,
+                type_name_flavor,
                 needed_types,
             )?;
 
@@ -162,7 +225,7 @@ pub fn type_name(
                 type_finder,
                 type_forwarder,
                 complete_element_type_index,
-                primitive_flavor,
+                type_name_flavor,
                 needed_types,
             )?;
             let type_size = u32::try_from(type_size(type_finder, complete_element_type_index)?)?;
@@ -206,7 +269,7 @@ pub fn type_name(
                 type_finder,
                 type_forwarder,
                 complete_underlying_type_index,
-                primitive_flavor,
+                type_name_flavor,
                 needed_types,
             )?;
             (type_left, format!("{} : {}", type_right, data.length))
@@ -222,7 +285,7 @@ pub fn type_name(
                     type_finder,
                     type_forwarder,
                     complete_return_type_index,
-                    primitive_flavor,
+                    type_name_flavor,
                     needed_types,
                 )?
             } else {
@@ -232,7 +295,7 @@ pub fn type_name(
                 type_finder,
                 type_forwarder,
                 data.argument_list,
-                primitive_flavor,
+                type_name_flavor,
                 needed_types,
             )?;
 
@@ -260,7 +323,7 @@ pub fn type_name(
                 type_finder,
                 type_forwarder,
                 complete_return_type_index,
-                primitive_flavor,
+                type_name_flavor,
                 needed_types,
             )?;
             // let (class_type_left, _) = type_name(
@@ -274,7 +337,7 @@ pub fn type_name(
                 type_finder,
                 type_forwarder,
                 data.argument_list,
-                primitive_flavor,
+                type_name_flavor,
                 needed_types,
             )?;
 
@@ -313,7 +376,7 @@ fn array_base_name(
     type_finder: &pdb::TypeFinder,
     type_forwarder: &TypeForwarder,
     type_index: pdb::TypeIndex,
-    primitive_flavor: &PrimitiveReconstructionFlavor,
+    type_name_flavor: &TypeNameFlavor,
     needed_types: &mut NeededTypeSet,
 ) -> Result<((String, String), Vec<usize>)> {
     match type_finder.find(type_index)?.parse()? {
@@ -325,7 +388,7 @@ fn array_base_name(
                 type_finder,
                 type_forwarder,
                 complete_element_type_index,
-                primitive_flavor,
+                type_name_flavor,
                 needed_types,
             )?;
             let type_size = u32::try_from(type_size(type_finder, complete_element_type_index)?)?;
@@ -358,7 +421,7 @@ fn array_base_name(
                 type_finder,
                 type_forwarder,
                 type_index,
-                primitive_flavor,
+                type_name_flavor,
                 needed_types,
             )?,
             vec![],
@@ -370,7 +433,7 @@ pub fn argument_list(
     type_finder: &pdb::TypeFinder,
     type_forwarder: &TypeForwarder,
     type_index: pdb::TypeIndex,
-    primitive_flavor: &PrimitiveReconstructionFlavor,
+    type_name_flavor: &TypeNameFlavor,
     needed_types: &mut NeededTypeSet,
 ) -> Result<Vec<(String, String)>> {
     match type_finder.find(type_index)?.parse()? {
@@ -381,7 +444,7 @@ pub fn argument_list(
                     type_finder,
                     type_forwarder,
                     arg_type,
-                    primitive_flavor,
+                    type_name_flavor,
                     needed_types,
                 )?);
             }
@@ -641,14 +704,20 @@ impl Data<'_> {
         Ok(())
     }
 
-    /// Sets the parameter names of the methods of every type of this set
-    /// (including nested types) found in `parameter_names`.
-    pub fn assign_parameter_names(&mut self, parameter_names: &MethodParameterNames) {
+    /// Sets what is known about the implementations of the methods of every
+    /// type of this set (including nested types): parameter names and/or
+    /// RVAs.
+    pub fn assign_method_implementations(
+        &mut self,
+        implementations: &MethodImplementations,
+        parameter_names: bool,
+        rvas: bool,
+    ) {
         for class in self.classes.values_mut() {
-            class.assign_parameter_names(parameter_names);
+            class.assign_method_implementations(implementations, parameter_names, rvas);
         }
         for u in self.unions.values_mut() {
-            u.assign_parameter_names(parameter_names);
+            u.assign_method_implementations(implementations, parameter_names, rvas);
         }
     }
 
@@ -756,7 +825,7 @@ impl<'p> Data<'p> {
         type_finder: &pdb::TypeFinder<'p>,
         type_forwarder: &TypeForwarder,
         type_index: pdb::TypeIndex,
-        primitive_flavor: &PrimitiveReconstructionFlavor,
+        type_name_flavor: &TypeNameFlavor,
         needed_types: &mut NeededTypeSet,
     ) -> Result<()> {
         match type_finder.find(type_index)?.parse()? {
@@ -793,7 +862,7 @@ impl<'p> Data<'p> {
                         type_finder,
                         type_forwarder,
                         fields,
-                        primitive_flavor,
+                        type_name_flavor,
                         needed_types,
                     ) {
                         log::error!(
@@ -831,7 +900,7 @@ impl<'p> Data<'p> {
                     type_finder,
                     type_forwarder,
                     data.fields,
-                    primitive_flavor,
+                    type_name_flavor,
                     needed_types,
                 ) {
                     log::error!(
@@ -869,7 +938,7 @@ impl<'p> Data<'p> {
                         type_finder,
                         type_forwarder,
                         data.underlying_type,
-                        primitive_flavor,
+                        type_name_flavor,
                         needed_types,
                     )?
                     .0,
@@ -1189,7 +1258,7 @@ fn fmt_struct_fields_interleaved<W: std::fmt::Write>(
 
     let unions_found = find_unnamed_unions_in_struct(fields);
     // Write fields into the `Formatter`
-    let indentation = "  ".repeat(depth);
+    let indentation = fmt_configuration.indent().repeat(depth);
     let mut last_field: Option<&Field> = None;
     for union_range in unions_found {
         before_group(union_range.start, f)?;
@@ -1428,7 +1497,7 @@ fn fmt_union_fields_interleaved<W: std::fmt::Write>(
     }
 
     let structs_found = find_unnamed_structs_in_unions(fields);
-    let indentation = "  ".repeat(depth);
+    let indentation = fmt_configuration.indent().repeat(depth);
     for struct_range in structs_found {
         before_group(struct_range.start, f)?;
         // Fields out of unnamed structs are represented by "empty" structs
@@ -1553,6 +1622,18 @@ pub struct DataFormatConfiguration {
     pub reconstruct_namespaces: bool,
     /// Print `override` on virtual methods overriding a base class method.
     pub print_override_specifiers: bool,
+    /// Don't print `virtual` on methods printed with `override`.
+    pub omit_virtual_on_overrides: bool,
+    /// Print the RVA of methods implemented in the PDB.
+    pub print_method_rvas: bool,
+    /// Print the calling convention of methods.
+    pub print_calling_conventions: bool,
+    pub vftable_comment_flavor: VftableCommentFlavor,
+    /// Don't print the `/* offset: fields for Base */` comments.
+    pub hide_base_class_offsets: bool,
+    pub indentation: IndentationFlavor,
+    /// Don't separate groups of members with blank lines.
+    pub compact_output: bool,
     pub print_offset_info: bool,
     pub print_brackets_new_line: bool,
 }
@@ -1567,8 +1648,32 @@ impl Default for DataFormatConfiguration {
             preserve_member_order: true,
             reconstruct_namespaces: true,
             print_override_specifiers: true,
+            omit_virtual_on_overrides: false,
+            print_method_rvas: true,
+            print_calling_conventions: false,
+            vftable_comment_flavor: VftableCommentFlavor::Offset,
+            hide_base_class_offsets: false,
+            indentation: IndentationFlavor::TwoSpaces,
+            compact_output: false,
             print_offset_info: true,
             print_brackets_new_line: false,
+        }
+    }
+}
+
+impl DataFormatConfiguration {
+    /// One level of indentation
+    pub fn indent(&self) -> &'static str {
+        self.indentation.as_str()
+    }
+
+    /// Writes the blank line separating groups of members, unless the output
+    /// is compact. The line holds one level of indentation.
+    pub fn fmt_separator(&self, f: &mut impl std::fmt::Write) -> fmt::Result {
+        if self.compact_output {
+            Ok(())
+        } else {
+            writeln!(f, "{}", self.indent())
         }
     }
 }

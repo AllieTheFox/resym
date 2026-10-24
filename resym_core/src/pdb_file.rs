@@ -22,8 +22,8 @@ use crate::{
     parameter_names::{procedure_parameter_names, ParameterLayout},
     pdb_types::{
         self, is_unnamed_type, type_name, AccessSpecifierReconstructionFlavor,
-        DataFormatConfiguration, MethodParameterNames, PrimitiveReconstructionFlavor,
-        SizePrintFlavor,
+        DataFormatConfiguration, IndentationFlavor, MethodImplementation, MethodImplementations,
+        PrimitiveReconstructionFlavor, SizePrintFlavor, TypeNameFlavor, VftableCommentFlavor,
     },
 };
 
@@ -133,9 +133,9 @@ where
     pub address_map: pdb::AddressMap<'p>,
     pub file_path: PathBuf,
     pub xref_to_map: RwLock<DashMap<TypeIndex, Vec<TypeIndex>>>,
-    /// Parameter names of the methods implemented in this PDB, read from the
-    /// procedure symbols of every module on first use
-    method_parameter_names: OnceLock<MethodParameterNames>,
+    /// Parameter names and RVAs of the methods implemented in this PDB, read
+    /// from the procedure symbols of every module on first use
+    method_implementations: OnceLock<MethodImplementations>,
     pdb: RwLock<pdb::PDB<'p, T>>,
 }
 
@@ -164,7 +164,7 @@ impl<'p> PdbFile<'p, File> {
             address_map,
             file_path: pdb_file_path.to_owned(),
             xref_to_map: DashMap::default().into(),
-            method_parameter_names: OnceLock::new(),
+            method_implementations: OnceLock::new(),
             pdb: pdb.into(),
         };
         pdb_file.load_symbols()?;
@@ -200,7 +200,7 @@ impl<'p> PdbFile<'p, PDBDataSource> {
             address_map,
             file_path: pdb_file_name.into(),
             xref_to_map: DashMap::default().into(),
-            method_parameter_names: OnceLock::new(),
+            method_implementations: OnceLock::new(),
             pdb: pdb.into(),
         };
         pdb_file.load_symbols()?;
@@ -234,7 +234,7 @@ impl<'p> PdbFile<'p, PDBDataSource> {
             address_map,
             file_path: pdb_file_name.into(),
             xref_to_map: DashMap::default().into(),
-            method_parameter_names: OnceLock::new(),
+            method_implementations: OnceLock::new(),
             pdb: pdb.into(),
         };
         pdb_file.load_symbols()?;
@@ -353,6 +353,14 @@ where
         reconstruct_namespaces: bool,
         print_override_specifiers: bool,
         print_argument_names: bool,
+        print_method_rvas: bool,
+        print_calling_conventions: bool,
+        vftable_comment_flavor: VftableCommentFlavor,
+        hide_base_class_offsets: bool,
+        omit_virtual_on_overrides: bool,
+        print_elaborated_type_specifiers: bool,
+        indentation: IndentationFlavor,
+        compact_output: bool,
     ) -> Result<ReconstructedType> {
         // Populate our `TypeFinder` and find the right type index
         let mut type_index = TypeIndex::default();
@@ -451,6 +459,14 @@ where
                 reconstruct_namespaces,
                 print_override_specifiers,
                 print_argument_names,
+                print_method_rvas,
+                print_calling_conventions,
+                vftable_comment_flavor,
+                hide_base_class_offsets,
+                omit_virtual_on_overrides,
+                print_elaborated_type_specifiers,
+                indentation,
+                compact_output,
             )
         }
     }
@@ -471,6 +487,14 @@ where
         reconstruct_namespaces: bool,
         print_override_specifiers: bool,
         print_argument_names: bool,
+        print_method_rvas: bool,
+        print_calling_conventions: bool,
+        vftable_comment_flavor: VftableCommentFlavor,
+        hide_base_class_offsets: bool,
+        omit_virtual_on_overrides: bool,
+        print_elaborated_type_specifiers: bool,
+        indentation: IndentationFlavor,
+        compact_output: bool,
     ) -> Result<ReconstructedType> {
         // Populate our `TypeFinder`
         let mut type_finder = self.type_information.finder();
@@ -497,6 +521,14 @@ where
             reconstruct_namespaces,
             print_override_specifiers,
             print_argument_names,
+            print_method_rvas,
+            print_calling_conventions,
+            vftable_comment_flavor,
+            hide_base_class_offsets,
+            omit_virtual_on_overrides,
+            print_elaborated_type_specifiers,
+            indentation,
+            compact_output,
         )
     }
 
@@ -882,6 +914,14 @@ where
         reconstruct_namespaces: bool,
         print_override_specifiers: bool,
         print_argument_names: bool,
+        print_method_rvas: bool,
+        print_calling_conventions: bool,
+        vftable_comment_flavor: VftableCommentFlavor,
+        hide_base_class_offsets: bool,
+        omit_virtual_on_overrides: bool,
+        print_elaborated_type_specifiers: bool,
+        indentation: IndentationFlavor,
+        compact_output: bool,
     ) -> Result<ReconstructedType> {
         let fmt_configuration = DataFormatConfiguration {
             print_access_specifiers,
@@ -893,6 +933,17 @@ where
             preserve_member_order,
             reconstruct_namespaces,
             print_override_specifiers,
+            omit_virtual_on_overrides,
+            print_method_rvas,
+            print_calling_conventions,
+            vftable_comment_flavor,
+            hide_base_class_offsets,
+            indentation,
+            compact_output,
+        };
+        let type_name_flavor = TypeNameFlavor {
+            primitives: primitives_flavor,
+            elaborated_type_specifiers: print_elaborated_type_specifiers,
         };
         let mut type_data = pdb_types::Data::new(ignore_std_types);
 
@@ -903,13 +954,16 @@ where
                 type_finder,
                 &self.forwarder_to_complete_type,
                 type_index.into(),
-                &primitives_flavor,
+                &type_name_flavor,
                 &mut needed_types,
             )?;
 
-            if print_argument_names {
-                type_data.assign_parameter_names(self.method_parameter_names(type_finder)?);
-            }
+            self.assign_method_implementations(
+                &mut type_data,
+                type_finder,
+                print_argument_names,
+                print_method_rvas,
+            )?;
             let mut reconstruction_output = String::new();
             type_data.reconstruct(
                 &fmt_configuration,
@@ -945,7 +999,7 @@ where
                         type_finder,
                         &self.forwarder_to_complete_type,
                         needed_type_index.into(),
-                        &primitives_flavor,
+                        &type_name_flavor,
                         &mut needed_types,
                     )?;
                     // Initialize only once, the first time (i.e., for the requested type)
@@ -1010,9 +1064,12 @@ where
         );
         let type_depth_map = compute_type_depth_map(&type_dependency_map, &root_types);
 
-        if print_argument_names {
-            type_data.assign_parameter_names(self.method_parameter_names(type_finder)?);
-        }
+        self.assign_method_implementations(
+            &mut type_data,
+            type_finder,
+            print_argument_names,
+            print_method_rvas,
+        )?;
         let mut reconstruction_output = String::new();
         type_data.reconstruct(
             &fmt_configuration,
@@ -1037,7 +1094,19 @@ where
         reconstruct_namespaces: bool,
         print_override_specifiers: bool,
         print_argument_names: bool,
+        print_method_rvas: bool,
+        print_calling_conventions: bool,
+        vftable_comment_flavor: VftableCommentFlavor,
+        hide_base_class_offsets: bool,
+        omit_virtual_on_overrides: bool,
+        print_elaborated_type_specifiers: bool,
+        indentation: IndentationFlavor,
+        compact_output: bool,
     ) -> Result<String> {
+        let type_name_flavor = TypeNameFlavor {
+            primitives: primitives_flavor,
+            elaborated_type_specifiers: print_elaborated_type_specifiers,
+        };
         let mut type_data = pdb_types::Data::new(ignore_std_types);
         let mut processed_types = Vec::new();
         let mut type_dependency_map: HashMap<TypeIndex, Vec<(TypeIndex, bool)>> = HashMap::new();
@@ -1065,7 +1134,7 @@ where
                     &type_finder,
                     &self.forwarder_to_complete_type,
                     complete_type_index,
-                    &primitives_flavor,
+                    &type_name_flavor,
                     &mut needed_types,
                 );
 
@@ -1102,9 +1171,12 @@ where
                 }
             }
 
-            if print_argument_names {
-                type_data.assign_parameter_names(self.method_parameter_names(&type_finder)?);
-            }
+            self.assign_method_implementations(
+                &mut type_data,
+                &type_finder,
+                print_argument_names,
+                print_method_rvas,
+            )?;
         }
 
         // Deduce type "depth" from the dependency map
@@ -1127,6 +1199,13 @@ where
                 preserve_member_order,
                 reconstruct_namespaces,
                 print_override_specifiers,
+                omit_virtual_on_overrides,
+                print_method_rvas,
+                print_calling_conventions,
+                vftable_comment_flavor,
+                hide_base_class_offsets,
+                indentation,
+                compact_output,
             },
             &type_depth_map,
             &mut reconstruction_output,
@@ -1164,7 +1243,7 @@ where
                     &type_finder,
                     &self.forwarder_to_complete_type,
                     current_type_index,
-                    &PrimitiveReconstructionFlavor::Raw,
+                    &TypeNameFlavor::new(PrimitiveReconstructionFlavor::Raw),
                     &mut needed_types,
                 );
                 // Process result
@@ -1226,18 +1305,37 @@ where
             .collect()
     }
 
-    /// Returns the parameter names of the methods implemented in this PDB.
-    /// The procedure symbols of every module are read the first time.
-    fn method_parameter_names(
+    /// Sets the parameter names and/or RVAs of the methods of `type_data`,
+    /// when requested.
+    fn assign_method_implementations(
+        &self,
+        type_data: &mut pdb_types::Data<'_>,
+        type_finder: &pdb::TypeFinder<'_>,
+        parameter_names: bool,
+        rvas: bool,
+    ) -> Result<()> {
+        if parameter_names || rvas {
+            type_data.assign_method_implementations(
+                self.method_implementations(type_finder)?,
+                parameter_names,
+                rvas,
+            );
+        }
+        Ok(())
+    }
+
+    /// Returns what is known about the methods implemented in this PDB. The
+    /// procedure symbols of every module are read the first time.
+    fn method_implementations(
         &self,
         type_finder: &pdb::TypeFinder<'_>,
-    ) -> Result<&MethodParameterNames> {
-        if let Some(parameter_names) = self.method_parameter_names.get() {
-            return Ok(parameter_names);
+    ) -> Result<&MethodImplementations> {
+        if let Some(implementations) = self.method_implementations.get() {
+            return Ok(implementations);
         }
 
         let start = Instant::now();
-        let mut parameter_names = MethodParameterNames::new();
+        let mut implementations = MethodImplementations::new();
         {
             let mut pdb = self.pdb.write().expect("lock shouldn't be poisoned");
             let mut modules = self.debug_information.modules()?;
@@ -1262,26 +1360,30 @@ where
                         procedure.name.to_string().into_owned(),
                         procedure.type_index,
                     );
-                    if parameter_names.contains_key(&key) {
+                    if implementations.contains_key(&key) {
                         // Inline methods are implemented in several modules
                         continue;
                     }
-                    if let Some(names) = procedure_parameter_names(
-                        module_info.symbols_at(symbol.index())?,
-                        procedure.end,
-                        &layout,
-                    ) {
-                        parameter_names.insert(key, names);
-                    }
+                    implementations.insert(
+                        key,
+                        MethodImplementation {
+                            parameter_names: procedure_parameter_names(
+                                module_info.symbols_at(symbol.index())?,
+                                procedure.end,
+                                &layout,
+                            ),
+                            rva: symbol_rva(&procedure.offset, &self.address_map),
+                        },
+                    );
                 }
             }
         }
         log::debug!(
-            "Method parameter names extraction took {} ms",
+            "Method implementations extraction took {} ms",
             start.elapsed().as_millis()
         );
 
-        Ok(self.method_parameter_names.get_or_init(|| parameter_names))
+        Ok(self.method_implementations.get_or_init(|| implementations))
     }
 
     fn reconstruct_symbol(
@@ -1293,6 +1395,7 @@ where
         primitives_flavor: PrimitiveReconstructionFlavor,
         print_access_specifiers: AccessSpecifierReconstructionFlavor,
     ) -> Option<String> {
+        let type_name_flavor = TypeNameFlavor::new(primitives_flavor);
         let mut needed_types = pdb_types::NeededTypeSet::new();
         match symbol.parse().ok()? {
             pdb::SymbolData::UserDefinedType(udt) => {
@@ -1300,7 +1403,7 @@ where
                     type_finder,
                     &self.forwarder_to_complete_type,
                     udt.type_index,
-                    &primitives_flavor,
+                    &type_name_flavor,
                     &mut needed_types,
                 ) {
                     if type_name.0 == "..." {
@@ -1343,7 +1446,7 @@ where
                     type_finder,
                     &self.forwarder_to_complete_type,
                     procedure.type_index,
-                    &primitives_flavor,
+                    &type_name_flavor,
                     &mut needed_types,
                 )
                 .ok() else {
@@ -1375,7 +1478,7 @@ where
                             type_finder,
                             &self.forwarder_to_complete_type,
                             parameter_layout.argument_list,
-                            &primitives_flavor,
+                            &type_name_flavor,
                             &mut needed_types,
                         )
                         .ok()?;
@@ -1416,7 +1519,7 @@ where
                     type_finder,
                     &self.forwarder_to_complete_type,
                     data.type_index,
-                    &primitives_flavor,
+                    &type_name_flavor,
                     &mut needed_types,
                 ) {
                     let static_prefix = if data.global { "" } else { "static " };

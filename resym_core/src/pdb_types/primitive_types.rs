@@ -64,6 +64,60 @@ impl FromStr for SizePrintFlavor {
     }
 }
 
+/// How the vftable entry introduced by a virtual method is shown
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum VftableCommentFlavor {
+    Disabled,
+    /// Byte offset in the vftable (e.g., `/* vftable+0x10 */`)
+    Offset,
+    /// Index of the vftable slot (e.g., `/* vftable[2] */`)
+    Index,
+}
+
+impl FromStr for VftableCommentFlavor {
+    type Err = ResymCoreError;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "disabled" | "false" => Ok(VftableCommentFlavor::Disabled),
+            "offset" | "true" => Ok(VftableCommentFlavor::Offset),
+            "index" | "slot" => Ok(VftableCommentFlavor::Index),
+            _ => Err(ResymCoreError::ParsePrimitiveFlavorError(s.to_owned())),
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum IndentationFlavor {
+    TwoSpaces,
+    FourSpaces,
+    Tab,
+}
+
+impl IndentationFlavor {
+    /// One level of indentation
+    pub fn as_str(self) -> &'static str {
+        match self {
+            IndentationFlavor::TwoSpaces => "  ",
+            IndentationFlavor::FourSpaces => "    ",
+            IndentationFlavor::Tab => "\t",
+        }
+    }
+}
+
+impl FromStr for IndentationFlavor {
+    type Err = ResymCoreError;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "2" | "two" => Ok(IndentationFlavor::TwoSpaces),
+            "4" | "four" => Ok(IndentationFlavor::FourSpaces),
+            "tab" | "tabs" => Ok(IndentationFlavor::Tab),
+            _ => Err(ResymCoreError::ParsePrimitiveFlavorError(s.to_owned())),
+        }
+    }
+}
+
 pub fn include_headers_for_flavor(
     flavor: PrimitiveReconstructionFlavor,
     ignore_std_types: bool,

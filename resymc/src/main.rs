@@ -5,7 +5,8 @@ mod syntax_highlighting;
 
 use anyhow::Result;
 use resym_core::pdb_types::{
-    AccessSpecifierReconstructionFlavor, PrimitiveReconstructionFlavor, SizePrintFlavor,
+    AccessSpecifierReconstructionFlavor, IndentationFlavor, PrimitiveReconstructionFlavor,
+    SizePrintFlavor, VftableCommentFlavor,
 };
 use structopt::StructOpt;
 
@@ -16,6 +17,8 @@ const DEFAULT_PRIMITIVE_FLAVOR: PrimitiveReconstructionFlavor = PrimitiveReconst
 const DEFAULT_ACCESS_SPECIFIER_FLAVOR: AccessSpecifierReconstructionFlavor =
     AccessSpecifierReconstructionFlavor::Always;
 const DEFAULT_PRINT_SIZE_FLAVOR: SizePrintFlavor = SizePrintFlavor::Comment;
+const DEFAULT_VFTABLE_COMMENT_FLAVOR: VftableCommentFlavor = VftableCommentFlavor::Offset;
+const DEFAULT_INDENTATION: IndentationFlavor = IndentationFlavor::TwoSpaces;
 
 fn main() -> Result<()> {
     env_logger::init();
@@ -57,6 +60,14 @@ fn main() -> Result<()> {
             reconstruct_namespaces,
             print_override_specifiers,
             print_argument_names,
+            print_method_rvas,
+            print_calling_conventions,
+            vftable_comment_flavor,
+            hide_base_class_offsets,
+            omit_virtual_on_overrides,
+            print_elaborated_type_specifiers,
+            indentation,
+            compact_output,
             highlight_syntax,
         } => app.dump_types_command(
             pdb_path,
@@ -75,6 +86,14 @@ fn main() -> Result<()> {
             reconstruct_namespaces,
             print_override_specifiers,
             print_argument_names,
+            print_method_rvas,
+            print_calling_conventions,
+            vftable_comment_flavor.unwrap_or(DEFAULT_VFTABLE_COMMENT_FLAVOR),
+            hide_base_class_offsets,
+            omit_virtual_on_overrides,
+            print_elaborated_type_specifiers,
+            indentation.unwrap_or(DEFAULT_INDENTATION),
+            compact_output,
             highlight_syntax,
             output_file_path,
         ),
@@ -94,6 +113,14 @@ fn main() -> Result<()> {
             reconstruct_namespaces,
             print_override_specifiers,
             print_argument_names,
+            print_method_rvas,
+            print_calling_conventions,
+            vftable_comment_flavor,
+            hide_base_class_offsets,
+            omit_virtual_on_overrides,
+            print_elaborated_type_specifiers,
+            indentation,
+            compact_output,
             highlight_syntax,
         } => app.dump_types_command(
             pdb_path,
@@ -112,6 +139,14 @@ fn main() -> Result<()> {
             reconstruct_namespaces,
             print_override_specifiers,
             print_argument_names,
+            print_method_rvas,
+            print_calling_conventions,
+            vftable_comment_flavor.unwrap_or(DEFAULT_VFTABLE_COMMENT_FLAVOR),
+            hide_base_class_offsets,
+            omit_virtual_on_overrides,
+            print_elaborated_type_specifiers,
+            indentation.unwrap_or(DEFAULT_INDENTATION),
+            compact_output,
             highlight_syntax,
             output_file_path,
         ),
@@ -134,6 +169,14 @@ fn main() -> Result<()> {
             reconstruct_namespaces,
             print_override_specifiers,
             print_argument_names,
+            print_method_rvas,
+            print_calling_conventions,
+            vftable_comment_flavor,
+            hide_base_class_offsets,
+            omit_virtual_on_overrides,
+            print_elaborated_type_specifiers,
+            indentation,
+            compact_output,
             highlight_syntax,
         } => app.diff_type_command(
             from_pdb_path,
@@ -153,6 +196,14 @@ fn main() -> Result<()> {
             reconstruct_namespaces,
             print_override_specifiers,
             print_argument_names,
+            print_method_rvas,
+            print_calling_conventions,
+            vftable_comment_flavor.unwrap_or(DEFAULT_VFTABLE_COMMENT_FLAVOR),
+            hide_base_class_offsets,
+            omit_virtual_on_overrides,
+            print_elaborated_type_specifiers,
+            indentation.unwrap_or(DEFAULT_INDENTATION),
+            compact_output,
             highlight_syntax,
             output_file_path,
         ),

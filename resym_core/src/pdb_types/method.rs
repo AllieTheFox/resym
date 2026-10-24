@@ -1,6 +1,6 @@
 use super::{
-    argument_list, field::FieldAccess, primitive_types::PrimitiveReconstructionFlavor, type_name,
-    NeededTypeSet, TypeForwarder,
+    argument_list, field::FieldAccess, type_name, type_size, DataFormatConfiguration,
+    NeededTypeSet, TypeForwarder, TypeNameFlavor, VftableCommentFlavor,
 };
 use crate::error::{Result, ResymCoreError};
 use std::mem;
@@ -28,6 +28,12 @@ pub struct Method<'p> {
     /// Byte offset of the vftable entry this method introduces, if any.
     /// Only set for introducing virtual methods of classes.
     pub vtable_offset: Option<u32>,
+    /// Size of the `this` pointer, which is the size of a vftable entry
+    pub pointer_size: Option<usize>,
+    /// `CV_call_e` calling convention
+    pub calling_convention: u8,
+    /// RVA of the method's implementation, when found in the symbols
+    pub rva: Option<u32>,
     pub access: FieldAccess,
 }
 
@@ -47,7 +53,7 @@ impl<'p> Method<'p> {
         type_finder: &pdb::TypeFinder<'p>,
         type_forwarder: &TypeForwarder,
         type_index: pdb::TypeIndex,
-        primitive_flavor: &PrimitiveReconstructionFlavor,
+        type_name_flavor: &TypeNameFlavor,
         needed_types: &mut NeededTypeSet,
     ) -> Result<Method<'p>> {
         match type_finder.find(type_index)?.parse()? {
@@ -57,14 +63,14 @@ impl<'p> Method<'p> {
                     type_finder,
                     type_forwarder,
                     data.return_type,
-                    primitive_flavor,
+                    type_name_flavor,
                     needed_types,
                 )?,
                 arguments: argument_list(
                     type_finder,
                     type_forwarder,
                     data.argument_list,
-                    primitive_flavor,
+                    type_name_flavor,
                     needed_types,
                 )?,
                 is_virtual: attributes.is_virtual()
@@ -92,7 +98,12 @@ impl<'p> Method<'p> {
                 },
                 is_compiler_generated: Method::get_is_compiler_generated(attributes),
                 vtable_offset: None,
+                pointer_size: data
+                    .this_pointer_type
+                    .and_then(|this_pointer_type| type_size(type_finder, this_pointer_type).ok()),
+                calling_convention: data.attributes.calling_convention(),
                 parameter_names: Vec::new(),
+                rva: None,
                 type_index,
                 access: FieldAccess::from_field_attribute(attributes.access()),
             }),
@@ -120,6 +131,66 @@ impl<'p> Method<'p> {
             })
             .collect::<Vec<String>>()
             .join(", ")
+    }
+
+    /// Calling convention keyword to write before the method's name, if the
+    /// configuration asks for it and the convention has one
+    pub fn calling_convention_keyword(
+        &self,
+        fmt_configuration: &DataFormatConfiguration,
+    ) -> Option<&'static str> {
+        if !fmt_configuration.print_calling_conventions {
+            return None;
+        }
+        // `CV_call_e` values from cvconst.h
+        match self.calling_convention {
+            0x00 => Some("__cdecl"),
+            0x04 => Some("__fastcall"),
+            0x07 => Some("__stdcall"),
+            0x0b => Some("__thiscall"),
+            0x16 => Some("__clrcall"),
+            0x18 => Some("__vectorcall"),
+            _ => None,
+        }
+    }
+
+    /// Indicates if `virtual` should be written before the method
+    pub fn is_virtual_printed(&self, fmt_configuration: &DataFormatConfiguration) -> bool {
+        self.is_virtual
+            && !(fmt_configuration.omit_virtual_on_overrides
+                && self.is_override_printed(fmt_configuration))
+    }
+
+    /// Indicates if `override` should be written after the method
+    pub fn is_override_printed(&self, fmt_configuration: &DataFormatConfiguration) -> bool {
+        fmt_configuration.print_override_specifiers && self.is_override
+    }
+
+    /// Comments written after the method's declaration: the vftable entry it
+    /// introduces and its RVA
+    pub fn fmt_trailing_comments(&self, fmt_configuration: &DataFormatConfiguration) -> String {
+        let mut comments = String::new();
+        if let Some(vtable_offset) = self.vtable_offset {
+            match fmt_configuration.vftable_comment_flavor {
+                VftableCommentFlavor::Disabled => {}
+                VftableCommentFlavor::Offset => {
+                    comments += &format!(" /* vftable+{vtable_offset:#x} */")
+                }
+                VftableCommentFlavor::Index => match self.pointer_size {
+                    Some(pointer_size) if pointer_size > 0 => {
+                        comments +=
+                            &format!(" /* vftable[{}] */", vtable_offset as usize / pointer_size)
+                    }
+                    _ => comments += &format!(" /* vftable+{vtable_offset:#x} */"),
+                },
+            }
+        }
+        if fmt_configuration.print_method_rvas {
+            if let Some(rva) = self.rva {
+                comments += &format!(" // RVA={rva:#x}");
+            }
+        }
+        comments
     }
 
     pub fn find_func_modifier(

@@ -91,7 +91,8 @@ impl Enum<'_> {
         for value in &self.values {
             writeln!(
                 f,
-                "  {} = {},",
+                "{}{} = {},",
+                fmt_configuration.indent(),
                 value.name.to_string(),
                 match value.value {
                     pdb::Variant::U8(v) => {

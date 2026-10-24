@@ -311,6 +311,16 @@ impl ResymApp {
                                             self.settings.app_settings.reconstruct_namespaces,
                                             self.settings.app_settings.print_override_specifiers,
                                             self.settings.app_settings.print_argument_names,
+                                            self.settings.app_settings.print_method_rvas,
+                                            self.settings.app_settings.print_calling_conventions,
+                                            self.settings.app_settings.vftable_comment_flavor,
+                                            self.settings.app_settings.hide_base_class_offsets,
+                                            self.settings.app_settings.omit_virtual_on_overrides,
+                                            self.settings
+                                                .app_settings
+                                                .print_elaborated_type_specifiers,
+                                            self.settings.app_settings.indentation,
+                                            self.settings.app_settings.compact_output,
                                         ),
                                     ) {
                                         log::error!("Failed to reconstruct type: {}", err);
@@ -336,6 +346,16 @@ impl ResymApp {
                                             self.settings.app_settings.reconstruct_namespaces,
                                             self.settings.app_settings.print_override_specifiers,
                                             self.settings.app_settings.print_argument_names,
+                                            self.settings.app_settings.print_method_rvas,
+                                            self.settings.app_settings.print_calling_conventions,
+                                            self.settings.app_settings.vftable_comment_flavor,
+                                            self.settings.app_settings.hide_base_class_offsets,
+                                            self.settings.app_settings.omit_virtual_on_overrides,
+                                            self.settings
+                                                .app_settings
+                                                .print_elaborated_type_specifiers,
+                                            self.settings.app_settings.indentation,
+                                            self.settings.app_settings.compact_output,
                                         ))
                                     {
                                         log::error!("Failed to reconstruct type diff: {}", err);
@@ -566,6 +586,14 @@ impl ResymApp {
                                         self.settings.app_settings.reconstruct_namespaces,
                                         self.settings.app_settings.print_override_specifiers,
                                         self.settings.app_settings.print_argument_names,
+                                        self.settings.app_settings.print_method_rvas,
+                                        self.settings.app_settings.print_calling_conventions,
+                                        self.settings.app_settings.vftable_comment_flavor,
+                                        self.settings.app_settings.hide_base_class_offsets,
+                                        self.settings.app_settings.omit_virtual_on_overrides,
+                                        self.settings.app_settings.print_elaborated_type_specifiers,
+                                        self.settings.app_settings.indentation,
+                                        self.settings.app_settings.compact_output,
                                     ))
                             {
                                 log::error!("Failed to reconstruct type: {}", err);

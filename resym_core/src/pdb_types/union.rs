@@ -5,11 +5,10 @@ use super::{
     field::{FieldAccess, StaticField},
     fmt_union_fields_interleaved, fmt_union_fields_recursive,
     nested::NestedDeclaration,
-    primitive_types::PrimitiveReconstructionFlavor,
     primitive_types::SizePrintFlavor,
     resolve_complete_type_index, type_bitfield_info, type_name, type_size, DataFormatConfiguration,
-    Field, MemberKind, MemberRef, Method, MethodParameterNames, NeededTypeSet,
-    ReconstructibleTypeData, TypeForwarder,
+    Field, MemberKind, MemberRef, Method, MethodImplementations, NeededTypeSet,
+    ReconstructibleTypeData, TypeForwarder, TypeNameFlavor,
 };
 use crate::error::{Result, ResymCoreError};
 
@@ -48,7 +47,7 @@ impl<'p> Union<'p> {
         type_finder: &pdb::TypeFinder<'p>,
         type_forwarder: &TypeForwarder,
         type_index: pdb::TypeIndex,
-        primitive_flavor: &PrimitiveReconstructionFlavor,
+        type_name_flavor: &TypeNameFlavor,
         needed_types: &mut NeededTypeSet,
     ) -> Result<()> {
         // Resolve the complete type's index, if present in the PDB
@@ -60,7 +59,7 @@ impl<'p> Union<'p> {
                         type_finder,
                         type_forwarder,
                         field,
-                        primitive_flavor,
+                        type_name_flavor,
                         needed_types,
                     )?;
                 }
@@ -71,7 +70,7 @@ impl<'p> Union<'p> {
                         type_finder,
                         type_forwarder,
                         continuation,
-                        primitive_flavor,
+                        type_name_flavor,
                         needed_types,
                     )?;
                 }
@@ -98,7 +97,7 @@ impl<'p> Union<'p> {
         type_finder: &pdb::TypeFinder<'p>,
         type_forwarder: &TypeForwarder,
         field: &pdb::TypeData<'p>,
-        primitive_flavor: &PrimitiveReconstructionFlavor,
+        type_name_flavor: &TypeNameFlavor,
         needed_types: &mut NeededTypeSet,
     ) -> Result<()> {
         match field {
@@ -110,7 +109,7 @@ impl<'p> Union<'p> {
                     type_finder,
                     type_forwarder,
                     complete_type_index,
-                    primitive_flavor,
+                    type_name_flavor,
                     needed_types,
                 )?;
                 let type_bitfield_info = type_bitfield_info(type_finder, complete_type_index)?;
@@ -137,7 +136,7 @@ impl<'p> Union<'p> {
                     type_finder,
                     type_forwarder,
                     complete_type_index,
-                    primitive_flavor,
+                    type_name_flavor,
                     needed_types,
                 )?;
                 let access = FieldAccess::from_field_attribute(data.attributes.access());
@@ -159,7 +158,7 @@ impl<'p> Union<'p> {
                     type_finder,
                     type_forwarder,
                     data.method_type,
-                    primitive_flavor,
+                    type_name_flavor,
                     needed_types,
                 )?;
                 self.push_method(method, data.attributes.is_static());
@@ -172,7 +171,7 @@ impl<'p> Union<'p> {
                     data,
                     type_finder,
                     type_forwarder,
-                    primitive_flavor,
+                    type_name_flavor,
                     needed_types,
                 )? {
                     self.members
@@ -199,7 +198,7 @@ impl<'p> Union<'p> {
                                 type_finder,
                                 type_forwarder,
                                 method_type,
-                                primitive_flavor,
+                                type_name_flavor,
                                 needed_types,
                             )?;
 
@@ -272,7 +271,7 @@ impl Union<'_> {
         // Nested declarations (written in PDB order with the other members
         // when preserving member order)
         if !fmt_configuration.preserve_member_order && !self.nested_types.is_empty() {
-            writeln!(f, "  ")?;
+            fmt_configuration.fmt_separator(f)?;
             for nested in &self.nested_types {
                 nested.reconstruct(fmt_configuration, &current_access, f)?;
             }
@@ -296,14 +295,14 @@ impl Union<'_> {
             }
 
             if !self.instance_methods.is_empty() {
-                writeln!(f, "  ")?;
+                fmt_configuration.fmt_separator(f)?;
                 for method in &self.instance_methods {
                     Self::fmt_instance_method(fmt_configuration, method, &current_access, f)?;
                 }
             }
 
             if !self.static_methods.is_empty() {
-                writeln!(f, "  ")?;
+                fmt_configuration.fmt_separator(f)?;
                 for method in &self.static_methods {
                     Self::fmt_static_method(fmt_configuration, method, &current_access, f)?;
                 }
@@ -332,21 +331,33 @@ impl Union<'_> {
 }
 
 impl<'p> Union<'p> {
-    /// Sets the parameter names of this union's methods and of the methods
-    /// of its nested types.
-    pub(crate) fn assign_parameter_names(&mut self, parameter_names: &MethodParameterNames) {
+    /// Sets what is known about the implementations of this union's methods
+    /// and of the methods of its nested types: parameter names and/or RVAs.
+    pub(crate) fn assign_method_implementations(
+        &mut self,
+        implementations: &MethodImplementations,
+        parameter_names: bool,
+        rvas: bool,
+    ) {
         let methods = self
             .instance_methods
             .iter_mut()
             .chain(self.static_methods.iter_mut());
         for method in methods {
             let key = (format!("{}::{}", self.name, method.name), method.type_index);
-            if let Some(names) = parameter_names.get(&key) {
-                method.parameter_names = names.clone();
+            if let Some(implementation) = implementations.get(&key) {
+                if parameter_names {
+                    if let Some(names) = &implementation.parameter_names {
+                        method.parameter_names = names.clone();
+                    }
+                }
+                if rvas {
+                    method.rva = implementation.rva;
+                }
             }
         }
         for nested in &mut self.nested_types {
-            nested.assign_parameter_names(parameter_names);
+            nested.assign_method_implementations(implementations, parameter_names, rvas);
         }
     }
 
@@ -395,7 +406,7 @@ impl<'p> Union<'p> {
                     f,
                 )?;
                 if last_kind != MemberKind::Data {
-                    writeln!(f, "  ")?;
+                    fmt_configuration.fmt_separator(f)?;
                 }
                 last_kind = MemberKind::Data;
                 Ok(())
@@ -431,7 +442,7 @@ impl<'p> Union<'p> {
                 continue;
             }
             if *last_kind != member.kind() {
-                writeln!(f, "  ")?;
+                fmt_configuration.fmt_separator(f)?;
             }
             *last_kind = member.kind();
 
@@ -472,7 +483,8 @@ impl<'p> Union<'p> {
     ) -> fmt::Result {
         writeln!(
             f,
-            "  {}static {} {}{};",
+            "{}{}static {} {}{};",
+            fmt_configuration.indent(),
             access_specifier(fmt_configuration, field.access, Some(current_access)),
             field.type_left,
             &field.name,
@@ -488,7 +500,8 @@ impl<'p> Union<'p> {
     ) -> fmt::Result {
         writeln!(
             f,
-            "  {}{}{}{}{}({}){}{}{}{};",
+            "{}{}{}{}{}{}{}({}){}{}{}{};{}",
+            fmt_configuration.indent(),
             access_specifier(fmt_configuration, method.access, Some(current_access)),
             if method.is_virtual { "virtual " } else { "" },
             if method.is_ctor || method.is_dtor {
@@ -501,12 +514,17 @@ impl<'p> Union<'p> {
             } else {
                 ""
             },
+            method
+                .calling_convention_keyword(fmt_configuration)
+                .map(|keyword| format!("{keyword} "))
+                .unwrap_or_default(),
             &method.name,
             method.fmt_arguments(),
             method.return_type_name.1,
             if method.is_const { " const" } else { "" },
             if method.is_volatile { " volatile" } else { "" },
             if method.is_pure_virtual { " = 0" } else { "" },
+            method.fmt_trailing_comments(fmt_configuration),
         )
     }
 
@@ -518,7 +536,8 @@ impl<'p> Union<'p> {
     ) -> fmt::Result {
         writeln!(
             f,
-            "  {}{}static {}{}{}({}){}{}{};",
+            "{}{}{}static {}{}{}{}({}){}{}{};{}",
+            fmt_configuration.indent(),
             access_specifier(fmt_configuration, method.access, Some(current_access)),
             if method.is_virtual { "virtual " } else { "" },
             method.return_type_name.0,
@@ -527,11 +546,16 @@ impl<'p> Union<'p> {
             } else {
                 ""
             },
+            method
+                .calling_convention_keyword(fmt_configuration)
+                .map(|keyword| format!("{keyword} "))
+                .unwrap_or_default(),
             &method.name,
             method.fmt_arguments(),
             method.return_type_name.1,
             if method.is_const { " const" } else { "" },
             if method.is_volatile { " volatile" } else { "" },
+            method.fmt_trailing_comments(fmt_configuration),
         )
     }
 }

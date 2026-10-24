@@ -1,6 +1,7 @@
 use eframe::egui;
 use resym_core::pdb_types::{
-    AccessSpecifierReconstructionFlavor, PrimitiveReconstructionFlavor, SizePrintFlavor,
+    AccessSpecifierReconstructionFlavor, IndentationFlavor, PrimitiveReconstructionFlavor,
+    SizePrintFlavor, VftableCommentFlavor,
 };
 
 use crate::settings::ResymAppSettings;
@@ -133,6 +134,76 @@ impl SettingsComponent {
                             &mut self.app_settings.print_argument_names,
                             "Print argument names",
                         );
+                        ui.checkbox(
+                            &mut self.app_settings.print_method_rvas,
+                            "Print method RVAs",
+                        );
+                        ui.checkbox(
+                            &mut self.app_settings.print_calling_conventions,
+                            "Print calling conventions",
+                        );
+                        ui.checkbox(
+                            &mut self.app_settings.omit_virtual_on_overrides,
+                            "Omit virtual on overrides",
+                        );
+                        ui.checkbox(
+                            &mut self.app_settings.print_elaborated_type_specifiers,
+                            "Print struct/class/union/enum before type names",
+                        );
+                        ui.checkbox(
+                            &mut self.app_settings.hide_base_class_offsets,
+                            "Hide base class offset comments",
+                        );
+                        ui.checkbox(&mut self.app_settings.compact_output, "Compact output");
+                        ui.label(
+                            egui::RichText::new("Vftable entry comments")
+                                .color(ui.style().visuals.widgets.inactive.text_color()),
+                        );
+                        egui::ComboBox::from_id_salt("vftable_comment_flavor")
+                            .selected_text(format!(
+                                "{:?}",
+                                self.app_settings.vftable_comment_flavor
+                            ))
+                            .show_ui(ui, |ui| {
+                                ui.selectable_value(
+                                    &mut self.app_settings.vftable_comment_flavor,
+                                    VftableCommentFlavor::Offset,
+                                    "Offset",
+                                );
+                                ui.selectable_value(
+                                    &mut self.app_settings.vftable_comment_flavor,
+                                    VftableCommentFlavor::Index,
+                                    "Index",
+                                );
+                                ui.selectable_value(
+                                    &mut self.app_settings.vftable_comment_flavor,
+                                    VftableCommentFlavor::Disabled,
+                                    "Disabled",
+                                );
+                            });
+                        ui.label(
+                            egui::RichText::new("Indentation")
+                                .color(ui.style().visuals.widgets.inactive.text_color()),
+                        );
+                        egui::ComboBox::from_id_salt("indentation")
+                            .selected_text(format!("{:?}", self.app_settings.indentation))
+                            .show_ui(ui, |ui| {
+                                ui.selectable_value(
+                                    &mut self.app_settings.indentation,
+                                    IndentationFlavor::TwoSpaces,
+                                    "2 spaces",
+                                );
+                                ui.selectable_value(
+                                    &mut self.app_settings.indentation,
+                                    IndentationFlavor::FourSpaces,
+                                    "4 spaces",
+                                );
+                                ui.selectable_value(
+                                    &mut self.app_settings.indentation,
+                                    IndentationFlavor::Tab,
+                                    "Tab",
+                                );
+                            });
                         ui.label(
                             egui::RichText::new("Print size comments")
                                 .color(ui.style().visuals.widgets.inactive.text_color()),

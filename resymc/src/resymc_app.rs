@@ -5,8 +5,10 @@ use resym_core::{
     backend::{Backend, BackendCommand, PDBSlot},
     frontend::FrontendCommand,
     pdb_types::AccessSpecifierReconstructionFlavor,
+    pdb_types::IndentationFlavor,
     pdb_types::PrimitiveReconstructionFlavor,
     pdb_types::SizePrintFlavor,
+    pdb_types::VftableCommentFlavor,
     syntax_highlighting::CodeTheme,
 };
 
@@ -109,6 +111,14 @@ impl ResymcApp {
         reconstruct_namespaces: bool,
         print_override_specifiers: bool,
         print_argument_names: bool,
+        print_method_rvas: bool,
+        print_calling_conventions: bool,
+        vftable_comment_flavor: VftableCommentFlavor,
+        hide_base_class_offsets: bool,
+        omit_virtual_on_overrides: bool,
+        print_elaborated_type_specifiers: bool,
+        indentation: IndentationFlavor,
+        compact_output: bool,
         highlight_syntax: bool,
         output_file_path: Option<PathBuf>,
     ) -> Result<()> {
@@ -144,6 +154,14 @@ impl ResymcApp {
                     reconstruct_namespaces,
                     print_override_specifiers,
                     print_argument_names,
+                    print_method_rvas,
+                    print_calling_conventions,
+                    vftable_comment_flavor,
+                    hide_base_class_offsets,
+                    omit_virtual_on_overrides,
+                    print_elaborated_type_specifiers,
+                    indentation,
+                    compact_output,
                 ))?;
         } else {
             self.backend
@@ -162,6 +180,14 @@ impl ResymcApp {
                     reconstruct_namespaces,
                     print_override_specifiers,
                     print_argument_names,
+                    print_method_rvas,
+                    print_calling_conventions,
+                    vftable_comment_flavor,
+                    hide_base_class_offsets,
+                    omit_virtual_on_overrides,
+                    print_elaborated_type_specifiers,
+                    indentation,
+                    compact_output,
                 ))?;
         }
         // Wait for the backend to finish filtering types
@@ -210,6 +236,14 @@ impl ResymcApp {
         reconstruct_namespaces: bool,
         print_override_specifiers: bool,
         print_argument_names: bool,
+        print_method_rvas: bool,
+        print_calling_conventions: bool,
+        vftable_comment_flavor: VftableCommentFlavor,
+        hide_base_class_offsets: bool,
+        omit_virtual_on_overrides: bool,
+        print_elaborated_type_specifiers: bool,
+        indentation: IndentationFlavor,
+        compact_output: bool,
         highlight_syntax: bool,
         output_file_path: Option<PathBuf>,
     ) -> Result<()> {
@@ -268,6 +302,14 @@ impl ResymcApp {
             reconstruct_namespaces,
             print_override_specifiers,
             print_argument_names,
+            print_method_rvas,
+            print_calling_conventions,
+            vftable_comment_flavor,
+            hide_base_class_offsets,
+            omit_virtual_on_overrides,
+            print_elaborated_type_specifiers,
+            indentation,
+            compact_output,
         ))?;
         // Wait for the backend to finish
         if let FrontendCommand::DiffResult(reconstructed_type_diff_result) =
@@ -837,6 +879,14 @@ mod tests {
                 false, // reconstruct_namespaces
                 false, // print_override_specifiers
                 false, // print_argument_names
+                false, // print_method_rvas
+                false, // print_calling_conventions
+                VftableCommentFlavor::Offset,
+                false, // hide_base_class_offsets
+                false, // omit_virtual_on_overrides
+                false, // print_elaborated_type_specifiers
+                IndentationFlavor::TwoSpaces,
+                false, // compact_output
                 false, // highlight_syntax
                 None
             )
@@ -867,7 +917,15 @@ mod tests {
                 true,  // reconstruct_namespaces
                 true,  // print_override_specifiers
                 true,  // print_argument_names
-                true,  // highlight_syntax
+                true,  // print_method_rvas
+                true,  // print_calling_conventions
+                VftableCommentFlavor::Index,
+                true, // hide_base_class_offsets
+                true, // omit_virtual_on_overrides
+                true, // print_elaborated_type_specifiers
+                IndentationFlavor::Tab,
+                true, // compact_output
+                true, // highlight_syntax
                 None
             )
             .is_ok());
@@ -900,6 +958,14 @@ mod tests {
                 false, // reconstruct_namespaces
                 false, // print_override_specifiers
                 false, // print_argument_names
+                false, // print_method_rvas
+                false, // print_calling_conventions
+                VftableCommentFlavor::Offset,
+                false, // hide_base_class_offsets
+                false, // omit_virtual_on_overrides
+                false, // print_elaborated_type_specifiers
+                IndentationFlavor::TwoSpaces,
+                false, // compact_output
                 false, // highlight_syntax
                 Some(output_path.clone()),
             )
@@ -956,6 +1022,14 @@ mod tests {
                 false, // reconstruct_namespaces
                 false, // print_override_specifiers
                 false, // print_argument_names
+                false, // print_method_rvas
+                false, // print_calling_conventions
+                VftableCommentFlavor::Offset,
+                false, // hide_base_class_offsets
+                false, // omit_virtual_on_overrides
+                false, // print_elaborated_type_specifiers
+                IndentationFlavor::TwoSpaces,
+                false, // compact_output
                 false, // highlight_syntax
                 None   // output_file_path
             )
@@ -987,8 +1061,16 @@ mod tests {
                 true,  // reconstruct_namespaces
                 true,  // print_override_specifiers
                 true,  // print_argument_names
-                true,  // highlight_syntax
-                None   // output_file_path
+                true,  // print_method_rvas
+                true,  // print_calling_conventions
+                VftableCommentFlavor::Index,
+                true, // hide_base_class_offsets
+                true, // omit_virtual_on_overrides
+                true, // print_elaborated_type_specifiers
+                IndentationFlavor::Tab,
+                true, // compact_output
+                true, // highlight_syntax
+                None  // output_file_path
             )
             .is_ok());
     }
@@ -1023,6 +1105,14 @@ mod tests {
                 false, // reconstruct_namespaces
                 false, // print_override_specifiers
                 false, // print_argument_names
+                false, // print_method_rvas
+                false, // print_calling_conventions
+                VftableCommentFlavor::Offset,
+                false, // hide_base_class_offsets
+                false, // omit_virtual_on_overrides
+                false, // print_elaborated_type_specifiers
+                IndentationFlavor::TwoSpaces,
+                false, // compact_output
                 false, // highlight_syntax
                 Some(output_path.clone()),
             )

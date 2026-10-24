@@ -4,7 +4,8 @@ use resym_core::{
     diffing::diff_type_by_name,
     pdb_file::PdbFile,
     pdb_types::{
-        AccessSpecifierReconstructionFlavor, PrimitiveReconstructionFlavor, SizePrintFlavor,
+        AccessSpecifierReconstructionFlavor, IndentationFlavor, PrimitiveReconstructionFlavor,
+        SizePrintFlavor, VftableCommentFlavor,
     },
 };
 
@@ -44,6 +45,14 @@ fn test_struct_diffing() {
             false, // reconstruct_namespaces
             false, // print_override_specifiers
             false, // print_argument_names
+            false, // print_method_rvas
+            false, // print_calling_conventions
+            VftableCommentFlavor::Offset,
+            false, // hide_base_class_offsets
+            false, // omit_virtual_on_overrides
+            false, // print_elaborated_type_specifiers
+            IndentationFlavor::TwoSpaces,
+            false, // compact_output
         )
         .expect("diff generation");
         insta::assert_snapshot!(diffed_type.data);
@@ -75,6 +84,14 @@ fn test_struct_diffing_inexistent_type() {
         false, // reconstruct_namespaces
         false, // print_override_specifiers
         false, // print_argument_names
+        false, // print_method_rvas
+        false, // print_calling_conventions
+        VftableCommentFlavor::Offset,
+        false, // hide_base_class_offsets
+        false, // omit_virtual_on_overrides
+        false, // print_elaborated_type_specifiers
+        IndentationFlavor::TwoSpaces,
+        false, // compact_output
     )
     .is_err());
 }

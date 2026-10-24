@@ -9,12 +9,10 @@ use super::{
     enumeration::Enum,
     field::FieldAccess,
     forward_declaration::{ForwardDeclaration, ForwardDeclarationKind},
-    is_unnamed_type,
-    primitive_types::PrimitiveReconstructionFlavor,
-    resolve_complete_type_index, type_name,
+    is_unnamed_type, resolve_complete_type_index, type_name,
     union::Union,
-    DataFormatConfiguration, MethodParameterNames, NeededTypeSet, ReconstructibleTypeData,
-    TypeForwarder,
+    DataFormatConfiguration, MethodImplementations, NeededTypeSet, ReconstructibleTypeData,
+    TypeForwarder, TypeNameFlavor,
 };
 use crate::error::Result;
 
@@ -60,7 +58,7 @@ impl<'p> NestedDeclaration<'p> {
         nested: &pdb::NestedType<'p>,
         type_finder: &pdb::TypeFinder<'p>,
         type_forwarder: &TypeForwarder,
-        primitive_flavor: &PrimitiveReconstructionFlavor,
+        type_name_flavor: &TypeNameFlavor,
         needed_types: &mut NeededTypeSet,
     ) -> Result<Option<Self>> {
         let name = nested.name.to_string().into_owned();
@@ -88,7 +86,7 @@ impl<'p> NestedDeclaration<'p> {
                             type_finder,
                             type_forwarder,
                             fields,
-                            primitive_flavor,
+                            type_name_flavor,
                             needed_types,
                         )?;
                     }
@@ -112,7 +110,7 @@ impl<'p> NestedDeclaration<'p> {
                         type_finder,
                         type_forwarder,
                         data.fields,
-                        primitive_flavor,
+                        type_name_flavor,
                         needed_types,
                     )?;
                     NestedDeclarationKind::Union { name, union }
@@ -127,7 +125,7 @@ impl<'p> NestedDeclaration<'p> {
                         type_finder,
                         type_forwarder,
                         data.underlying_type,
-                        primitive_flavor,
+                        type_name_flavor,
                         needed_types,
                     )?
                     .0,
@@ -142,7 +140,7 @@ impl<'p> NestedDeclaration<'p> {
                     type_finder,
                     type_forwarder,
                     type_index,
-                    primitive_flavor,
+                    type_name_flavor,
                     needed_types,
                 )?;
                 NestedDeclarationKind::Typedef {
@@ -159,14 +157,20 @@ impl<'p> NestedDeclaration<'p> {
         }))
     }
 
-    /// Sets the parameter names of the methods of the nested type.
-    pub fn assign_parameter_names(&mut self, parameter_names: &MethodParameterNames) {
+    /// Sets what is known about the implementations of the methods of the
+    /// nested type.
+    pub fn assign_method_implementations(
+        &mut self,
+        implementations: &MethodImplementations,
+        parameter_names: bool,
+        rvas: bool,
+    ) {
         match &mut self.kind {
             NestedDeclarationKind::Class { class, .. } => {
-                class.assign_parameter_names(parameter_names)
+                class.assign_method_implementations(implementations, parameter_names, rvas)
             }
             NestedDeclarationKind::Union { union, .. } => {
-                union.assign_parameter_names(parameter_names)
+                union.assign_method_implementations(implementations, parameter_names, rvas)
             }
             _ => {}
         }
@@ -226,11 +230,12 @@ impl<'p> NestedDeclaration<'p> {
         }
 
         let access = access_specifier(fmt_configuration, self.access, Some(current_access));
+        let indent = fmt_configuration.indent();
         for (i, line) in declaration.lines().enumerate() {
             if i == 0 {
-                writeln!(f, "  {access}{line}")?;
+                writeln!(f, "{indent}{access}{line}")?;
             } else {
-                writeln!(f, "  {line}")?;
+                writeln!(f, "{indent}{line}")?;
             }
         }
 

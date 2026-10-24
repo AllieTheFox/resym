@@ -1,7 +1,8 @@
 use std::path::PathBuf;
 
 use resym_core::pdb_types::{
-    AccessSpecifierReconstructionFlavor, PrimitiveReconstructionFlavor, SizePrintFlavor,
+    AccessSpecifierReconstructionFlavor, IndentationFlavor, PrimitiveReconstructionFlavor,
+    SizePrintFlavor, VftableCommentFlavor,
 };
 use structopt::StructOpt;
 
@@ -81,6 +82,30 @@ pub enum ResymcOptions {
         /// Print parameter names of methods when the PDB has them
         #[structopt(short = "A", long)]
         print_argument_names: bool,
+        /// Print the RVA of methods implemented in the PDB
+        #[structopt(long)]
+        print_method_rvas: bool,
+        /// Print the calling convention of methods
+        #[structopt(long)]
+        print_calling_conventions: bool,
+        /// Vftable entry comments: offset, index or disabled
+        #[structopt(long)]
+        vftable_comment_flavor: Option<VftableCommentFlavor>,
+        /// Don't print the base class offset comments
+        #[structopt(long)]
+        hide_base_class_offsets: bool,
+        /// Don't print `virtual` on methods printed with `override`
+        #[structopt(long)]
+        omit_virtual_on_overrides: bool,
+        /// Prefix type names with their keyword (e.g., `struct IUnknown*`)
+        #[structopt(long)]
+        print_elaborated_type_specifiers: bool,
+        /// Indentation: 2, 4 or tab
+        #[structopt(long)]
+        indentation: Option<IndentationFlavor>,
+        /// Don't separate groups of members with blank lines
+        #[structopt(long)]
+        compact_output: bool,
         /// Highlight C++ output
         #[structopt(short = "H", long)]
         highlight_syntax: bool,
@@ -130,6 +155,30 @@ pub enum ResymcOptions {
         /// Print parameter names of methods when the PDB has them
         #[structopt(short = "A", long)]
         print_argument_names: bool,
+        /// Print the RVA of methods implemented in the PDB
+        #[structopt(long)]
+        print_method_rvas: bool,
+        /// Print the calling convention of methods
+        #[structopt(long)]
+        print_calling_conventions: bool,
+        /// Vftable entry comments: offset, index or disabled
+        #[structopt(long)]
+        vftable_comment_flavor: Option<VftableCommentFlavor>,
+        /// Don't print the base class offset comments
+        #[structopt(long)]
+        hide_base_class_offsets: bool,
+        /// Don't print `virtual` on methods printed with `override`
+        #[structopt(long)]
+        omit_virtual_on_overrides: bool,
+        /// Prefix type names with their keyword (e.g., `struct IUnknown*`)
+        #[structopt(long)]
+        print_elaborated_type_specifiers: bool,
+        /// Indentation: 2, 4 or tab
+        #[structopt(long)]
+        indentation: Option<IndentationFlavor>,
+        /// Don't separate groups of members with blank lines
+        #[structopt(long)]
+        compact_output: bool,
         /// Highlight C++ output
         #[structopt(short = "H", long)]
         highlight_syntax: bool,
@@ -186,6 +235,30 @@ pub enum ResymcOptions {
         /// Print parameter names of methods when the PDB has them
         #[structopt(short = "A", long)]
         print_argument_names: bool,
+        /// Print the RVA of methods implemented in the PDB
+        #[structopt(long)]
+        print_method_rvas: bool,
+        /// Print the calling convention of methods
+        #[structopt(long)]
+        print_calling_conventions: bool,
+        /// Vftable entry comments: offset, index or disabled
+        #[structopt(long)]
+        vftable_comment_flavor: Option<VftableCommentFlavor>,
+        /// Don't print the base class offset comments
+        #[structopt(long)]
+        hide_base_class_offsets: bool,
+        /// Don't print `virtual` on methods printed with `override`
+        #[structopt(long)]
+        omit_virtual_on_overrides: bool,
+        /// Prefix type names with their keyword (e.g., `struct IUnknown*`)
+        #[structopt(long)]
+        print_elaborated_type_specifiers: bool,
+        /// Indentation: 2, 4 or tab
+        #[structopt(long)]
+        indentation: Option<IndentationFlavor>,
+        /// Don't separate groups of members with blank lines
+        #[structopt(long)]
+        compact_output: bool,
         /// Highlight C++ output and add/deleted lines
         #[structopt(short = "H", long)]
         highlight_syntax: bool,
