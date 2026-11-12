@@ -249,7 +249,11 @@ impl<'p> NestedDeclaration<'p> {
                 name,
                 type_left,
                 type_right,
-            } => writeln!(declaration, "typedef {type_left} {name}{type_right};")?,
+            } => writeln!(
+                declaration,
+                "typedef {type_left} {}{type_right};",
+                super::escape_name(name)
+            )?,
         }
 
         let access = access_specifier(fmt_configuration, self.access, Some(current_access));

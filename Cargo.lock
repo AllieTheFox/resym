@@ -2961,7 +2961,7 @@ checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
 [[package]]
 name = "pdb"
 version = "0.8.0"
-source = "git+https://github.com/ergrelet/pdb?tag=0.8.0-resym01#8ebba489d332e44db6eb8051b9fa0db1f57cb3b9"
+source = "git+https://github.com/AllieTheFox/pdb?rev=1d1d42d7e0739020eb32eaa9a66762e121590dc0#1d1d42d7e0739020eb32eaa9a66762e121590dc0"
 dependencies = [
  "fallible-iterator",
  "scroll",

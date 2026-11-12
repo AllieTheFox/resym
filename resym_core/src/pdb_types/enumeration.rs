@@ -82,7 +82,7 @@ impl Enum<'_> {
         writeln!(
             f,
             "enum {} : {}{}{{",
-            name,
+            super::escape_name(name),
             self.underlying_type_name,
             if fmt_configuration.print_brackets_new_line {
                 "\n"

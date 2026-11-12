@@ -21,6 +21,7 @@
 - Add a setting to print where each class, struct, union and enum is defined (source file and line, from the PDB's IPI stream), and where each function is defined in symbol and module views (from the line information of its module). On by default; `--print-source-locations` for `dump`, `dump-all`, `diff`, `dump-symbol`, `dump-all-symbols`, `diff-symbol`, `dump-module` and `diff-module` in `resymc`
 - Browse the source files of a PDB ("Browse files" tab): selecting a header or source file shows the types and functions defined in it, in the order of their line, and diffs them when comparing PDBs (`list-source-files`, `dump-source-file` and `diff-source-file` in `resymc`)
 - Add a setting to write structs, unions, enums and handles with the name of their typedef from the PDB, following the Windows headers' conventions (`GUID` for `_GUID`, `SIZE` for `tagSIZE`, `HWND` for `HWND__*`). When referenced types are printed, the typedefs are declared after the types they name. Types with several typedefs get the conventional one (`IID` and `CLSID` are written `GUID`, `HMODULE` is written `HINSTANCE`), as the PDB doesn't record which typedef was used (`--use-typedef-names` in `resymc`)
+- The window title names the loaded PDB and its folder (both PDBs when comparing), so `resym` windows can be told apart in the taskbar
 
 ### Changed
 
@@ -32,7 +33,8 @@
 - The settings window is split into "General", "Types", "Functions" and "Output" tabs, keeps the same size on every tab, and shows drop-down settings next to their label
 - Looking up a symbol by name (`dump-symbol`, `diff-symbol` and symbol diffs in `resym`) prefers a function or variable to the public symbol with the same name
 - Syntax highlighting runs in the background in `resym`: the code is shown right away and colored once highlighted, instead of freezing the window (large views took over a minute). It can use all the CPU's cores ("Highlight using all CPU cores", on by default), and each top-level definition is highlighted on its own, so a definition the highlighter misreads no longer miscolors the rest of the view
-- Symbol names that aren't valid C++ names (e.g., `` `eh vector destructor iterator' ``, or names that couldn't be demangled) are written as `__identifier("...")`, preceded by `#pragma warning(disable: 4483)` so that MSVC accepts them. Their quotes no longer break syntax highlighting
+- Names that aren't valid C++ names (e.g., `` `eh vector destructor iterator' ``, `<lambda_...>` classes, or names that couldn't be demangled) are written as `__identifier("...")` in symbols, type definitions, members and template arguments, preceded by `#pragma warning(disable: 4483)` so that MSVC accepts them. MSVC's explicit overrides (`Class::[Interface]::Method`) are kept. Their quotes no longer break syntax highlighting
+- C++/CX handles and tracking references are printed as `^` and `%` instead of `*` and `&`, with a fix of the `pdb` crate fork, which read the wrong bit of pointer attributes
 
 ## [0.4.0] - 2024-03-24
 

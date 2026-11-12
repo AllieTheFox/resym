@@ -1632,6 +1632,9 @@ where
             print_method_rvas,
             reconstruct_dependencies,
         )
+        .map(|(reconstructed_type, xrefs_from)| {
+            (with_identifier_pragma(reconstructed_type), xrefs_from)
+        })
     }
 
     /// Reconstructs `root_types` and, with `reconstruct_dependencies`, the
@@ -1952,7 +1955,7 @@ where
             &mut reconstruction_output,
         )?;
 
-        Ok(reconstruction_output)
+        Ok(with_identifier_pragma(reconstruction_output))
     }
 
     pub fn get_xrefs_for_type(&self, type_index: TypeIndex) -> Result<TypeList> {

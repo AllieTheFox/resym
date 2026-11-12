@@ -15,7 +15,8 @@ rayon = ["dep:rayon", "dep:num_cpus", "dashmap/rayon"]
 http = ["dep:ehttp", "dep:url"]
 
 [dependencies]
-pdb = { git = "https://github.com/ergrelet/pdb", tag = "0.8.0-resym01" }
+# ergrelet/pdb 0.8.0-resym01 with the `is_mocom` fix
+pdb = { git = "https://github.com/AllieTheFox/pdb", rev = "1d1d42d7e0739020eb32eaa9a66762e121590dc0" }
 thiserror = "1.0"
 log = "0.4"
 rayon = { version = "1.10", optional = true }

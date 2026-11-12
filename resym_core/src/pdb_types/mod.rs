@@ -114,7 +114,7 @@ impl TypeNameFlavor<'_> {
     fn tag_name(&self, keyword: &str, name: String) -> String {
         match self.typedef_names.and_then(|names| names.tags.get(&name)) {
             Some(typedef_name) => typedef_name.clone(),
-            None => self.elaborate(keyword, name),
+            None => self.elaborate(keyword, escape_name(&name).into_owned()),
         }
     }
 
@@ -224,8 +224,13 @@ pub fn type_name(
 
             let mut suffix = String::new();
             if data.attributes.is_mocom() {
-                // how to tell the difference between ^ and %
-                suffix.push_str("^ ");
+                // C++/CX handles (`^`) and tracking references (`%`, e.g.,
+                // the `const X%` parameter of ref class copy constructors)
+                if data.attributes.pointer_mode() == pdb::PointerMode::LValueReference {
+                    suffix.push_str("% ");
+                } else {
+                    suffix.push_str("^ ");
+                }
             } else if data.attributes.pointer_mode() == pdb::PointerMode::RValueReference {
                 suffix.push_str("&& ");
             } else if data.attributes.pointer_mode() == pdb::PointerMode::LValueReference {
@@ -1441,66 +1446,187 @@ pub const IDENTIFIER_PRAGMA: &str = "#pragma warning(disable: 4483) // __identif
 
 /// Returns `name` with the components of the qualified name that aren't
 /// valid C++ names (e.g., `` `eh vector destructor iterator' `` or
-/// `<lambda_1>`) written as `__identifier("...")`, which MSVC accepts with
-/// `IDENTIFIER_PRAGMA`.
+/// `<lambda_1>`), including in template arguments, written as
+/// `__identifier("...")`, which MSVC accepts with `IDENTIFIER_PRAGMA`.
 pub fn escape_name(name: &str) -> Cow<'_, str> {
-    let components = name_components(name);
-    if components
+    let components = split_top_level(name, b"::");
+    let escaped_components: Vec<Cow<'_, str>> = components
         .iter()
-        .all(|component| is_valid_name_component(component))
+        .map(|component| escape_name_component(component))
+        .collect();
+    if escaped_components
+        .iter()
+        .all(|component| matches!(component, Cow::Borrowed(_)))
     {
         return Cow::Borrowed(name);
     }
-    Cow::Owned(
-        components
-            .iter()
-            .map(|component| {
-                if is_valid_name_component(component) {
-                    (*component).to_owned()
-                } else {
-                    let escaped = component.replace('\\', "\\\\").replace('"', "\\\"");
-                    format!("__identifier(\"{escaped}\")")
-                }
-            })
-            .collect::<Vec<_>>()
-            .join("::"),
-    )
+    Cow::Owned(escaped_components.join("::"))
 }
 
-/// Splits a qualified name at the `::` that aren't part of template
-/// arguments, parameter lists or MSVC's `` `quoted' `` names.
-fn name_components(name: &str) -> Vec<&str> {
-    let bytes = name.as_bytes();
-    let mut components = Vec::new();
-    let mut component_start = 0;
-    let (mut angle_depth, mut paren_depth, mut quote_depth) = (0usize, 0usize, 0usize);
+fn escape_name_component(component: &str) -> Cow<'_, str> {
+    // Operator names and MSVC's explicit overrides of an interface's method
+    // (`Class::[Interface]::Method`) are valid
+    if is_operator_name(component.as_bytes())
+        || (component.starts_with('[') && component.ends_with(']'))
+    {
+        return Cow::Borrowed(component);
+    }
+    if let Some(destructed_name) = component.strip_prefix('~') {
+        return match escape_name_component(destructed_name) {
+            Cow::Borrowed(_) => Cow::Borrowed(component),
+            Cow::Owned(escaped) => Cow::Owned(format!("~{escaped}")),
+        };
+    }
+    let identifier_length = component
+        .bytes()
+        .take_while(|b| is_identifier_byte(*b))
+        .count();
+    if identifier_length > 0 && !component.as_bytes()[0].is_ascii_digit() {
+        let template_arguments = &component[identifier_length..];
+        if template_arguments.is_empty() {
+            return Cow::Borrowed(component);
+        }
+        if let Some(arguments) = template_arguments
+            .strip_prefix('<')
+            .and_then(|arguments| arguments.strip_suffix('>'))
+        {
+            let escaped_arguments: Vec<Cow<'_, str>> = split_top_level(arguments, b",")
+                .into_iter()
+                .map(escape_names_in_type)
+                .collect();
+            if escaped_arguments
+                .iter()
+                .all(|argument| matches!(argument, Cow::Borrowed(_)))
+            {
+                return Cow::Borrowed(component);
+            }
+            return Cow::Owned(format!(
+                "{}<{}>",
+                &component[..identifier_length],
+                escaped_arguments.join(",")
+            ));
+        }
+    }
+    let escaped = component.replace('\\', "\\\\").replace('"', "\\\"");
+    Cow::Owned(format!("__identifier(\"{escaped}\")"))
+}
+
+/// Escapes the names written in a type (e.g., the template argument
+/// `const Foo<<lambda_1> >*`), leaving keywords, punctuation and numbers.
+fn escape_names_in_type(text: &str) -> Cow<'_, str> {
+    let bytes = text.as_bytes();
+    let mut escaped = String::new();
+    let mut copied_until = 0;
+    let mut i = 0;
+    while i < bytes.len() {
+        if !is_name_start(bytes, i) {
+            i += 1;
+            continue;
+        }
+        let end = qualified_name_end(bytes, i);
+        if let Cow::Owned(escaped_name) = escape_name(&text[i..end]) {
+            escaped.push_str(&text[copied_until..i]);
+            escaped.push_str(&escaped_name);
+            copied_until = end;
+        }
+        i = end;
+    }
+    if copied_until == 0 {
+        return Cow::Borrowed(text);
+    }
+    escaped.push_str(&text[copied_until..]);
+    Cow::Owned(escaped)
+}
+
+/// Whether a name starts at `bytes[i]` in a type: an identifier, a
+/// `` `quoted' `` name, or a name between angle brackets (`<lambda_1>`).
+/// Template arguments are written right after their template's name, so a
+/// `<` following an identifier opens them instead.
+fn is_name_start(bytes: &[u8], i: usize) -> bool {
+    let follows_identifier = i > 0 && is_identifier_byte(bytes[i - 1]);
+    match bytes[i] {
+        b'`' => true,
+        b'<' => !follows_identifier,
+        byte => is_identifier_byte(byte) && !byte.is_ascii_digit() && !follows_identifier,
+    }
+}
+
+/// Returns where the qualified name starting at `bytes[start]` ends.
+fn qualified_name_end(bytes: &[u8], start: usize) -> usize {
+    let mut i = start;
+    loop {
+        match bytes.get(i) {
+            Some(b'`') | Some(b'<') => i = enclosed_end(bytes, i),
+            Some(byte) if is_identifier_byte(*byte) => {
+                while bytes.get(i).is_some_and(|b| is_identifier_byte(*b)) {
+                    i += 1;
+                }
+                if bytes.get(i) == Some(&b'<') {
+                    i = enclosed_end(bytes, i);
+                }
+            }
+            _ => return i,
+        }
+        let next_component_start = bytes
+            .get(i + 2)
+            .is_some_and(|b| *b == b'`' || *b == b'<' || is_identifier_byte(*b));
+        if bytes[i..].starts_with(b"::") && next_component_start {
+            i += 2;
+        } else {
+            return i;
+        }
+    }
+}
+
+/// Returns the position after the `>` or `'` closing the angle brackets or
+/// quotes opened at `bytes[start]` (nested ones included).
+fn enclosed_end(bytes: &[u8], start: usize) -> usize {
+    let (mut angle_depth, mut quote_depth) = (0usize, 0usize);
+    for (i, byte) in bytes.iter().enumerate().skip(start) {
+        match byte {
+            b'`' => quote_depth += 1,
+            b'\'' if quote_depth > 0 => quote_depth -= 1,
+            b'<' if quote_depth == 0 => angle_depth += 1,
+            b'>' if quote_depth == 0 && angle_depth > 0 => angle_depth -= 1,
+            _ => {}
+        }
+        if angle_depth == 0 && quote_depth == 0 {
+            return i + 1;
+        }
+    }
+    bytes.len()
+}
+
+/// Splits `text` at the `separator`s that aren't part of template arguments,
+/// parameter lists, `[explicit overrides]` or MSVC's `` `quoted' `` names.
+fn split_top_level<'t>(text: &'t str, separator: &[u8]) -> Vec<&'t str> {
+    let bytes = text.as_bytes();
+    let mut parts = Vec::new();
+    let mut part_start = 0;
+    let (mut bracket_depth, mut quote_depth) = (0usize, 0usize);
     let mut i = 0;
     while i < bytes.len() {
         // Operator names (`operator<`) can hold unbalanced brackets
-        let in_operator_name = is_operator_name(&bytes[component_start..i]);
+        let in_operator_name = is_operator_name(&bytes[part_start..i]);
         match bytes[i] {
             b'`' => quote_depth += 1,
             b'\'' if quote_depth > 0 => quote_depth -= 1,
-            b'<' if quote_depth == 0 && !in_operator_name => angle_depth += 1,
-            b'>' if quote_depth == 0 && !in_operator_name && angle_depth > 0 => angle_depth -= 1,
-            b'(' if quote_depth == 0 => paren_depth += 1,
-            b')' if quote_depth == 0 && paren_depth > 0 => paren_depth -= 1,
-            b':' if quote_depth == 0
-                && angle_depth == 0
-                && paren_depth == 0
-                && bytes.get(i + 1) == Some(&b':') =>
-            {
-                components.push(&name[component_start..i]);
-                i += 2;
-                component_start = i;
+            b'<' | b'(' | b'[' if quote_depth == 0 && !in_operator_name => bracket_depth += 1,
+            b'>' | b')' | b']' if quote_depth == 0 && !in_operator_name && bracket_depth > 0 => {
+                bracket_depth -= 1
+            }
+            _ if quote_depth == 0 && bracket_depth == 0 && bytes[i..].starts_with(separator) => {
+                parts.push(&text[part_start..i]);
+                i += separator.len();
+                part_start = i;
                 continue;
             }
             _ => {}
         }
         i += 1;
     }
-    components.push(&name[component_start..]);
-    components
+    parts.push(&text[part_start..]);
+    parts
 }
 
 fn is_operator_name(component: &[u8]) -> bool {
@@ -1512,24 +1638,6 @@ fn is_operator_name(component: &[u8]) -> bool {
 /// Bytes MSVC accepts in identifiers (`$` and UTF-8 included)
 fn is_identifier_byte(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'$' || byte >= 0x80
-}
-
-/// Whether `component` is an identifier (or a destructor name) with optional
-/// template arguments, or an operator name.
-fn is_valid_name_component(component: &str) -> bool {
-    if is_operator_name(component.as_bytes()) {
-        return true;
-    }
-    let name = component.strip_prefix('~').unwrap_or(component);
-    let identifier_length = name.bytes().take_while(|b| is_identifier_byte(*b)).count();
-    if identifier_length == 0 || name.as_bytes()[0].is_ascii_digit() {
-        return false;
-    }
-    let template_arguments = &name[identifier_length..];
-    template_arguments.is_empty()
-        || (template_arguments.starts_with('<')
-            && template_arguments.ends_with('>')
-            && !template_arguments.contains(['`', '\'']))
 }
 
 /// Splits a qualified name at its last `::` that isn't part of template
@@ -1729,7 +1837,7 @@ fn fmt_struct_fields_interleaved<W: std::fmt::Write>(
                 f,
                 "{} {}{};",
                 field.type_left,
-                field.name.to_string(),
+                escape_name(&field.name.to_string()),
                 field.type_right
             )?;
             if fmt_configuration.print_offset_info {
@@ -1928,7 +2036,7 @@ fn fmt_union_fields_interleaved<W: std::fmt::Write>(
                 f,
                 "{} {}{};",
                 field.type_left,
-                field.name.to_string(),
+                escape_name(&field.name.to_string()),
                 field.type_right
             )?;
             if fmt_configuration.print_offset_info {
@@ -2164,15 +2272,23 @@ mod tests {
             escape_name("`__ArrayUnwind'::`1'::filt$0"),
             "__identifier(\"`__ArrayUnwind'\")::__identifier(\"`1'\")::filt$0"
         );
-        // `::` inside quoted names and template arguments don't split
+        // `::` inside quoted names doesn't split
         assert_eq!(
             escape_name("`Foo::Bar'::x"),
             "__identifier(\"`Foo::Bar'\")::x"
         );
+        // Names in template arguments are escaped, numbers and keywords aren't
         assert_eq!(
-            escape_name("Foo<`anonymous namespace'::Bar>::f"),
-            "__identifier(\"Foo<`anonymous namespace'::Bar>\")::f"
+            escape_name("Foo<`anonymous namespace'::Bar,const <lambda_2> *,-1>::f"),
+            "Foo<__identifier(\"`anonymous namespace'\")::Bar,\
+             const __identifier(\"<lambda_2>\") *,-1>::f"
         );
+        assert_eq!(
+            escape_name("Capture<<lambda_1>,void>"),
+            "Capture<__identifier(\"<lambda_1>\"),void>"
+        );
+        // The `~` of destructors stays outside
+        assert_eq!(escape_name("~<lambda_1>"), "~__identifier(\"<lambda_1>\")");
         assert_eq!(
             escape_name("<lambda_1>::operator()"),
             "__identifier(\"<lambda_1>\")::operator()"
@@ -2185,6 +2301,8 @@ mod tests {
             "Foo<1>::operator<<",
             "Foo::operator bool",
             "filt$0",
+            // MSVC's explicit override of an interface method
+            "StartUI::TileViewControl::[StartUI::IStoryboardWrapperCallbacks]::CreateStoryboard",
         ] {
             assert_eq!(escape_name(name), name);
         }

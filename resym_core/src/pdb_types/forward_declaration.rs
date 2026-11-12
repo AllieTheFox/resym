@@ -23,7 +23,7 @@ impl ForwardDeclaration {
     /// Writes the declaration under the given name (e.g., the unqualified
     /// name when declared inside a namespace block).
     pub(crate) fn reconstruct_as(&self, name: &str, f: &mut impl std::fmt::Write) -> fmt::Result {
-        writeln!(f, "{} {};", self.kind.keyword(), name)
+        writeln!(f, "{} {};", self.kind.keyword(), super::escape_name(name))
     }
 }
 

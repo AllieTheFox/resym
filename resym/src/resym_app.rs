@@ -9,7 +9,13 @@ use resym_core::{
 
 #[cfg(target_arch = "wasm32")]
 use std::{cell::RefCell, rc::Rc};
-use std::{collections::HashMap, fmt::Write, sync::Arc, vec};
+use std::{
+    collections::HashMap,
+    fmt::Write,
+    path::{Path, PathBuf},
+    sync::Arc,
+    vec,
+};
 
 #[cfg(feature = "http")]
 use crate::ui_components::OpenURLComponent;
@@ -349,6 +355,10 @@ pub struct ResymApp {
     /// Exact paths of the listed source files, by index (tree paths don't
     /// keep `.` components)
     source_file_paths: HashMap<usize, String>,
+    /// Paths of the loaded PDBs, by slot
+    loaded_pdb_paths: HashMap<usize, PathBuf>,
+    /// Title last given to the window
+    window_title: String,
     code_view: CodeViewComponent,
     // Components used in the bottom panel
     bottom_panel_selected_tab: BottomPanelTab,
@@ -384,6 +394,7 @@ impl eframe::App for ResymApp {
 
         // Process incoming commands, if any
         self.process_ui_commands();
+        self.update_window_title(ctx);
 
         // Update theme if needed
         self.process_theme_update(ctx);
@@ -471,6 +482,8 @@ impl ResymApp {
             source_file_search: TextSearchComponent::new(),
             source_file_tree: ModuleTreeComponent::new(),
             source_file_paths: HashMap::new(),
+            loaded_pdb_paths: HashMap::new(),
+            window_title: String::new(),
             code_view: CodeViewComponent::new(),
             bottom_panel_selected_tab: BottomPanelTab::Console,
             console: ConsoleComponent::new(logger),
@@ -939,6 +952,40 @@ impl ResymApp {
         });
     }
 
+    /// Names the loaded PDBs in the window's title (and so in the taskbar):
+    /// `file.pdb (directory) - resym`, `old.pdb (...) vs new.pdb (...) -
+    /// resym` when comparing.
+    fn update_window_title(&mut self, ctx: &egui::Context) {
+        let describe = |path: &Path| {
+            let file_name = path.file_name().map_or_else(
+                || path.display().to_string(),
+                |name| name.to_string_lossy().into_owned(),
+            );
+            // PDBs loaded from memory only have a name
+            match path
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+            {
+                Some(directory) => format!("{file_name} ({})", directory.display()),
+                None => file_name,
+            }
+        };
+        let loaded_pdbs: Vec<String> = [ResymPDBSlots::Main as usize, ResymPDBSlots::Diff as usize]
+            .iter()
+            .filter_map(|slot| self.loaded_pdb_paths.get(slot))
+            .map(|path| describe(path))
+            .collect();
+        let title = if loaded_pdbs.is_empty() {
+            "resym".to_owned()
+        } else {
+            format!("{} - resym", loaded_pdbs.join(" vs "))
+        };
+        if title != self.window_title {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
+            self.window_title = title;
+        }
+    }
+
     fn process_ui_commands(&mut self) {
         while let Ok(cmd) = self.frontend_controller.rx_ui.try_recv() {
             match cmd {
@@ -946,8 +993,12 @@ impl ResymApp {
                     Err(err) => {
                         log::error!("Failed to load PDB file: {}", err);
                     }
-                    Ok(pdb_slot) => {
+                    Ok((pdb_slot, pdb_path)) => {
+                        self.loaded_pdb_paths.insert(pdb_slot, pdb_path);
                         if pdb_slot == ResymPDBSlots::Main as usize {
+                            // Loading a new PDB ends comparisons
+                            self.loaded_pdb_paths
+                                .remove(&(ResymPDBSlots::Diff as usize));
                             // Unload the PDB used for diffing if one is loaded
                             if let ResymAppMode::Comparing(..) = self.current_mode {
                                 if let Err(err) = self.backend.send_command(

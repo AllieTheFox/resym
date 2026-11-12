@@ -365,7 +365,12 @@ impl Class<'_> {
         f: &mut impl std::fmt::Write,
     ) -> fmt::Result {
         fmt_configuration.fmt_source_location(self.source_location.as_deref(), f)?;
-        write!(f, "{} {}", class_kind_keyword(self.kind), name)?;
+        write!(
+            f,
+            "{} {}",
+            class_kind_keyword(self.kind),
+            super::escape_name(name)
+        )?;
 
         if !self.base_classes.is_empty() {
             for (i, base) in self.base_classes.iter().enumerate() {
@@ -699,7 +704,7 @@ impl<'p> Class<'p> {
             fmt_configuration.indent(),
             access_specifier(fmt_configuration, field.access, Some(current_access)),
             field.type_left,
-            &field.name,
+            super::escape_name(&field.name.to_string()),
             field.type_right,
         )
     }
@@ -737,7 +742,7 @@ impl<'p> Class<'p> {
                 .calling_convention_keyword(fmt_configuration)
                 .map(|keyword| format!("{keyword} "))
                 .unwrap_or_default(),
-            &method.name,
+            super::escape_name(&method.name.to_string()),
             method.fmt_arguments(),
             method.return_type_name.1,
             if method.is_const { " const" } else { "" },
@@ -773,7 +778,7 @@ impl<'p> Class<'p> {
                 .calling_convention_keyword(fmt_configuration)
                 .map(|keyword| format!("{keyword} "))
                 .unwrap_or_default(),
-            &method.name,
+            super::escape_name(&method.name.to_string()),
             method.fmt_arguments(),
             method.return_type_name.1,
             if method.is_const { " const" } else { "" },

@@ -538,8 +538,10 @@ fn worker_thread_routine(
                     Err(err) => frontend_controller
                         .send_command(FrontendCommand::LoadPDBResult(Err(err)))?,
                     Ok(loaded_pdb_file) => {
-                        frontend_controller
-                            .send_command(FrontendCommand::LoadPDBResult(Ok(pdb_slot)))?;
+                        frontend_controller.send_command(FrontendCommand::LoadPDBResult(Ok((
+                            pdb_slot,
+                            loaded_pdb_file.file_path.clone(),
+                        ))))?;
                         if let Some(pdb_file) = pdb_files.insert(pdb_slot, loaded_pdb_file) {
                             log::info!("'{}' has been unloaded.", pdb_file.file_path.display());
                         }
@@ -557,8 +559,10 @@ fn worker_thread_routine(
                     Err(err) => frontend_controller
                         .send_command(FrontendCommand::LoadPDBResult(Err(err)))?,
                     Ok(loaded_pdb_file) => {
-                        frontend_controller
-                            .send_command(FrontendCommand::LoadPDBResult(Ok(pdb_slot)))?;
+                        frontend_controller.send_command(FrontendCommand::LoadPDBResult(Ok((
+                            pdb_slot,
+                            loaded_pdb_file.file_path.clone(),
+                        ))))?;
                         if let Some(pdb_file) = pdb_files.insert(pdb_slot, loaded_pdb_file) {
                             log::info!("'{}' has been unloaded.", pdb_file.file_path.display());
                         }
@@ -573,8 +577,10 @@ fn worker_thread_routine(
                     Err(err) => frontend_controller
                         .send_command(FrontendCommand::LoadPDBResult(Err(err)))?,
                     Ok(loaded_pdb_file) => {
-                        frontend_controller
-                            .send_command(FrontendCommand::LoadPDBResult(Ok(pdb_slot)))?;
+                        frontend_controller.send_command(FrontendCommand::LoadPDBResult(Ok((
+                            pdb_slot,
+                            loaded_pdb_file.file_path.clone(),
+                        ))))?;
                         if let Some(pdb_file) = pdb_files.insert(pdb_slot, loaded_pdb_file) {
                             log::info!("'{}' has been unloaded.", pdb_file.file_path.display());
                         }

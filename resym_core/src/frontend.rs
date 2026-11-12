@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use crate::{
     backend::PDBSlot,
     diffing::Diff,
@@ -10,7 +12,8 @@ use crate::{
 pub type ReconstructedType = (String, TypeList);
 
 pub enum FrontendCommand {
-    LoadPDBResult(Result<PDBSlot>),
+    /// Slot and path of the loaded PDB (its name when loaded from memory)
+    LoadPDBResult(Result<(PDBSlot, PathBuf)>),
     /// Send result from `LoadURL` backend command.
     /// Contains last path segment (i.e., file name) as a `String` and data as `Vec<u8>`.
     LoadURLResult(Result<(PDBSlot, String, Vec<u8>)>),
