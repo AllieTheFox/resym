@@ -22,6 +22,8 @@
 - Browse the source files of a PDB ("Browse files" tab): selecting a header or source file shows the types and functions defined in it, in the order of their line, and diffs them when comparing PDBs (`list-source-files`, `dump-source-file` and `diff-source-file` in `resymc`)
 - Add a setting to write structs, unions, enums and handles with the name of their typedef from the PDB, following the Windows headers' conventions (`GUID` for `_GUID`, `SIZE` for `tagSIZE`, `HWND` for `HWND__*`). When referenced types are printed, the typedefs are declared after the types they name. Types with several typedefs get the conventional one (`IID` and `CLSID` are written `GUID`, `HMODULE` is written `HINSTANCE`), as the PDB doesn't record which typedef was used (`--use-typedef-names` in `resymc`)
 - The window title names the loaded PDB and its folder (both PDBs when comparing), so `resym` windows can be told apart in the taskbar
+- Reconstruct integer constant initializers retained by the PDB, including static members of classes, unions and nested types, named global constants, and local constants in function scopes. Static members follow the integer display setting; values respect the declared type's signedness and enum types. Variables without recorded values keep their declarations without an initializer
+- Show recorded compiler build information for the selected module, with selectable paths, complete compiler options, and a copy-all button. The section has a vertically draggable divider above the C++ view. Add `module-build-info` to `resymc` for displaying or exporting the same metadata. Missing information is distinguished from malformed or unsupported metadata
 
 ### Changed
 

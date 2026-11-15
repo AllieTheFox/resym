@@ -162,6 +162,52 @@ fn test_type_reconstruction_no_comments() {
     );
 }
 
+#[test]
+fn static_constant_initializers_follow_the_recorded_member_values() {
+    let pdb_file = PdbFile::load_from_file(Path::new(TEST_PDB_FILE_PATH)).expect("load test.pdb");
+    for (hexadecimal, expected) in [(false, "12"), (true, "0x000c")] {
+        for preserve_member_order in [false, true] {
+            let (output, _) = pdb_file
+                .reconstruct_type_by_name(
+                    "CodeViewInfo::ComboID",
+                    PrimitiveReconstructionFlavor::Msvc,
+                    false,
+                    AccessSpecifierReconstructionFlavor::Disabled,
+                    SizePrintFlavor::Disabled,
+                    false,
+                    hexadecimal,
+                    false,
+                    true,
+                    false,
+                    true,
+                    preserve_member_order,
+                    false,
+                    false,
+                    false,
+                    false,
+                    false,
+                    false,
+                    false,
+                    false,
+                    VftableCommentFlavor::Disabled,
+                    true,
+                    false,
+                    false,
+                    IndentationFlavor::FourSpaces,
+                    false,
+                    false,
+                )
+                .expect("reconstruct constant-bearing type");
+            assert!(output.contains(&format!("ImodBitWidth = {expected};")));
+            assert!(output.contains(if hexadecimal {
+                "IndexBitWidth = 0x0014;"
+            } else {
+                "IndexBitWidth = 20;"
+            }));
+        }
+    }
+}
+
 fn test_type_reconstruction_internal(
     test_name: &str,
     primitives_flavor: PrimitiveReconstructionFlavor,

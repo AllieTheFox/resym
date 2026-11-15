@@ -246,6 +246,8 @@ pub enum BackendCommand {
     /// Retrieve a list of modules that match the given filter for multiple PDBs
     /// and merge the result.
     ListModules(PDBSlot, String, bool, bool),
+    /// Retrieve the recorded compiler build information of a module.
+    GetModuleBuildInfo(PDBSlot, usize),
     /// Reconstruct a module given its index for a given PDB.
     ReconstructModuleByIndex(
         PDBSlot,
@@ -1246,6 +1248,22 @@ fn worker_thread_routine(
                         reconstructed_module_result,
                     ))?;
                 }
+            }
+
+            BackendCommand::GetModuleBuildInfo(pdb_slot, module_index) => {
+                let result = pdb_files
+                    .get(&pdb_slot)
+                    .ok_or_else(|| {
+                        ResymCoreError::InvalidParameterError(format!(
+                            "PDB slot {pdb_slot} is not loaded"
+                        ))
+                    })
+                    .and_then(|pdb_file| pdb_file.module_build_info(module_index));
+                frontend_controller.send_command(FrontendCommand::ModuleBuildInfoResult(
+                    pdb_slot,
+                    module_index,
+                    result,
+                ))?;
             }
 
             BackendCommand::ListModules(

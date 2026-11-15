@@ -737,6 +737,42 @@ impl ResymcApp {
         }
     }
 
+    pub fn module_build_info_command(
+        &self,
+        pdb_path: PathBuf,
+        module_id: usize,
+        output_file_path: Option<PathBuf>,
+    ) -> Result<()> {
+        self.backend
+            .send_command(BackendCommand::LoadPDBFromPath(PDB_MAIN_SLOT, pdb_path))?;
+        if let FrontendCommand::LoadPDBResult(result) = self.frontend_controller.rx_ui.recv()? {
+            result?;
+        } else {
+            return Err(anyhow!("Invalid response received from the backend?"));
+        }
+
+        self.backend
+            .send_command(BackendCommand::GetModuleBuildInfo(PDB_MAIN_SLOT, module_id))?;
+        let FrontendCommand::ModuleBuildInfoResult(slot, index, result) =
+            self.frontend_controller.rx_ui.recv()?
+        else {
+            return Err(anyhow!("Invalid response received from the backend?"));
+        };
+        if slot != PDB_MAIN_SLOT || index != module_id {
+            return Err(anyhow!("Build information belongs to a different module"));
+        }
+        let output = match result? {
+            Some(info) => info.to_string(),
+            None => format!("Build information unavailable for module #{module_id}\n"),
+        };
+        if let Some(output_file_path) = output_file_path {
+            File::create(output_file_path)?.write_all(output.as_bytes())?;
+        } else {
+            print!("{output}");
+        }
+        Ok(())
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn diff_module_command(
         &self,

@@ -323,6 +323,15 @@ pub enum ResymcOptions {
         #[structopt(short = "r", long)]
         use_regex: bool,
     },
+    /// Show recorded compiler build information for a module
+    ModuleBuildInfo {
+        /// Path to the PDB file
+        pdb_path: PathBuf,
+        /// Zero-based module ID, as shown by list-modules
+        module_id: usize,
+        /// Path of the output file
+        output_file_path: Option<PathBuf>,
+    },
     /// Dump module from a given PDB file
     DumpModule {
         /// Path to the PDB file

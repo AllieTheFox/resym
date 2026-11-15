@@ -3,6 +3,7 @@ use eframe::egui;
 use memory_logger::blocking::MemoryLogger;
 use resym_core::{
     backend::{Backend, BackendCommand, PDBSlot, SymbolFilters, TypeFilters},
+    build_info::{ModuleBuildInfo, BUILD_INFO_ARGUMENT_NAMES},
     frontend::FrontendCommand,
     pdb_file::{SymbolIndex, TypeIndex},
 };
@@ -70,6 +71,13 @@ enum ReconstructionRequest {
     Symbol { name: String, index: SymbolIndex },
     Module { path: String, pdb_index: usize },
     SourceFile { path: String },
+}
+
+enum ModuleBuildInfoState {
+    Loading,
+    Unavailable,
+    Error(String),
+    Available(ModuleBuildInfo),
 }
 
 /// Requests the backend to reconstruct (or diff, when comparing PDBs) the
@@ -349,6 +357,7 @@ pub struct ResymApp {
     last_reconstruction: Option<ReconstructionRequest>,
     module_search: TextSearchComponent,
     module_tree: ModuleTreeComponent,
+    module_build_info: Option<ModuleBuildInfoState>,
     source_file_search: TextSearchComponent,
     /// Source files, shown like modules
     source_file_tree: ModuleTreeComponent,
@@ -479,6 +488,7 @@ impl ResymApp {
             last_reconstruction: None,
             module_search: TextSearchComponent::new(),
             module_tree: ModuleTreeComponent::new(),
+            module_build_info: None,
             source_file_search: TextSearchComponent::new(),
             source_file_tree: ModuleTreeComponent::new(),
             source_file_paths: HashMap::new(),
@@ -604,6 +614,7 @@ impl ResymApp {
                         let mut on_type_selected = |type_name: &str, type_index: TypeIndex| {
                             // Update currently selected type index
                             self.selected_type_index = Some(type_index);
+                            self.module_build_info = None;
 
                             let request = ReconstructionRequest::Type {
                                 name: type_name.to_string(),
@@ -677,6 +688,7 @@ impl ResymApp {
                             |symbol_name: &str, symbol_index: SymbolIndex| {
                                 // Update currently selected type index
                                 self.selected_symbol_index = Some(symbol_index);
+                                self.module_build_info = None;
 
                                 let request = ReconstructionRequest::Symbol {
                                     name: symbol_name.to_string(),
@@ -722,6 +734,17 @@ impl ResymApp {
                         // Callback run when a module is selected in the tree
                         let mut on_module_selected =
                             |module_path: &ModulePath, module_info: &ModuleInfo| {
+                                self.module_build_info = Some(ModuleBuildInfoState::Loading);
+                                if let Err(err) =
+                                    self.backend
+                                        .send_command(BackendCommand::GetModuleBuildInfo(
+                                            ResymPDBSlots::Main as usize,
+                                            module_info.pdb_index,
+                                        ))
+                                {
+                                    self.module_build_info =
+                                        Some(ModuleBuildInfoState::Error(err.to_string()));
+                                }
                                 let request = ReconstructionRequest::Module {
                                     path: module_path.to_string(),
                                     pdb_index: module_info.pdb_index,
@@ -765,6 +788,7 @@ impl ResymApp {
                         // Callback run when a source file is selected in the tree
                         let mut on_source_file_selected =
                             |source_file_path: &ModulePath, source_file_info: &ModuleInfo| {
+                                self.module_build_info = None;
                                 let path = self
                                     .source_file_paths
                                     .get(&source_file_info.pdb_index)
@@ -825,6 +849,7 @@ impl ResymApp {
 
                         // Note: only support "Browsing" mode
                         if let ResymAppMode::Browsing(..) = self.current_mode {
+                            self.module_build_info = None;
                             let request = ReconstructionRequest::Type {
                                 name: type_name.to_string(),
                                 index: type_index,
@@ -858,8 +883,116 @@ impl ResymApp {
             });
     }
 
+    fn update_module_build_info(&self, ui: &mut egui::Ui) {
+        if self.left_panel_selected_tab != LeftPanelTab::ModuleBrowsing {
+            return;
+        }
+        let Some(ReconstructionRequest::Module { path, pdb_index }) = &self.last_reconstruction
+        else {
+            return;
+        };
+        let Some(state) = &self.module_build_info else {
+            return;
+        };
+
+        egui::CollapsingHeader::new("Build information")
+            .id_salt("module_build_info")
+            .default_open(true)
+            .show(ui, |ui| {
+                let max_height = (ui.available_height() - 100.0).max(60.0);
+                egui::TopBottomPanel::top("module_build_info_splitter")
+                    .resizable(true)
+                    .default_height(260.0)
+                    .height_range(60.0..=max_height)
+                    .frame(egui::Frame::NONE)
+                    .show_inside(ui, |ui| {
+                        egui::ScrollArea::both()
+                            .id_salt(("module_build_info_fields", pdb_index))
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| {
+                                ui.label(format!("Main PDB module {pdb_index}"));
+                                if matches!(self.current_mode, ResymAppMode::Comparing(..)) {
+                                    ui.label("Main PDB only; build information is not compared.");
+                                }
+                                ui.add(
+                                    egui::TextEdit::multiline(&mut path.as_str())
+                                        .code_editor()
+                                        .desired_rows(1)
+                                        .desired_width(ui.available_width()),
+                                );
+                                match state {
+                                    ModuleBuildInfoState::Loading => {
+                                        ui.horizontal(|ui| {
+                                            ui.spinner();
+                                            ui.label("Loading build information...");
+                                        });
+                                    }
+                                    ModuleBuildInfoState::Unavailable => {
+                                        ui.label(
+                                            "Build information is unavailable for this module.",
+                                        );
+                                    }
+                                    ModuleBuildInfoState::Error(message) => {
+                                        ui.colored_label(
+                                            ui.visuals().error_fg_color,
+                                            "Failed to load build information:",
+                                        );
+                                        ui.add(
+                                            egui::TextEdit::multiline(&mut message.as_str())
+                                                .desired_rows(1)
+                                                .desired_width(ui.available_width()),
+                                        );
+                                    }
+                                    ModuleBuildInfoState::Available(info) => {
+                                        if ui.button("Copy all build information").clicked() {
+                                            ui.ctx().copy_text(info.to_string());
+                                        }
+                                        ui.label("Build-info item index");
+                                        let item_index = format!("0x{:X}", info.item_index.0);
+                                        ui.add(
+                                            egui::TextEdit::singleline(&mut item_index.as_str())
+                                                .font(egui::TextStyle::Monospace),
+                                        );
+                                        for argument_index in 0..info
+                                            .arguments
+                                            .len()
+                                            .max(BUILD_INFO_ARGUMENT_NAMES.len())
+                                        {
+                                            ui.push_id(argument_index, |ui| {
+                                                if let Some(name) =
+                                                    BUILD_INFO_ARGUMENT_NAMES.get(argument_index)
+                                                {
+                                                    ui.label(*name);
+                                                } else {
+                                                    ui.label(format!(
+                                                        "Argument {}",
+                                                        argument_index + 1
+                                                    ));
+                                                }
+                                                let mut value = info
+                                                    .arguments
+                                                    .get(argument_index)
+                                                    .and_then(|value| value.as_deref())
+                                                    .unwrap_or("<unavailable>");
+                                                ui.add(
+                                                    egui::TextEdit::multiline(&mut value)
+                                                        .code_editor()
+                                                        .desired_rows(1)
+                                                        .desired_width(ui.available_width()),
+                                                );
+                                            });
+                                        }
+                                    }
+                                }
+                            });
+                    });
+            });
+        ui.separator();
+    }
+
     fn update_central_panel(&mut self, ctx: &egui::Context) {
         egui::CentralPanel::default().show(ctx, |ui| {
+            self.update_module_build_info(ui);
             ui.horizontal(|ui| {
                 // The central panel the region left after adding TopPanel's and SidePanel's
                 // Put the label on the left
@@ -995,6 +1128,7 @@ impl ResymApp {
                     }
                     Ok((pdb_slot, pdb_path)) => {
                         self.loaded_pdb_paths.insert(pdb_slot, pdb_path);
+                        self.module_build_info = None;
                         if pdb_slot == ResymPDBSlots::Main as usize {
                             // Loading a new PDB ends comparisons
                             self.loaded_pdb_paths
@@ -1017,6 +1151,7 @@ impl ResymApp {
                             // Reset selected type
                             self.selected_type_index = None;
                             self.last_reconstruction = None;
+                            self.module_tree.set_module_list(vec![]);
                             // Reset xref lists
                             self.xref_to_list.update_index_list(vec![]);
                             self.xref_from_list.update_index_list(vec![]);
@@ -1157,6 +1292,26 @@ impl ResymApp {
                         Ok(module_list) => {
                             self.module_tree.set_module_list(module_list);
                         }
+                    }
+                }
+
+                FrontendCommand::ModuleBuildInfoResult(pdb_slot, module_index, result) => {
+                    // The backend is ordered: a successful PDB replacement resets the
+                    // selection before any metadata requested from the replacement arrives.
+                    let is_selected = matches!(
+                        &self.last_reconstruction,
+                        Some(ReconstructionRequest::Module { pdb_index, .. })
+                            if *pdb_index == module_index
+                    );
+                    if pdb_slot == ResymPDBSlots::Main as usize
+                        && is_selected
+                        && self.module_build_info.is_some()
+                    {
+                        self.module_build_info = Some(match result {
+                            Ok(Some(info)) => ModuleBuildInfoState::Available(info),
+                            Ok(None) => ModuleBuildInfoState::Unavailable,
+                            Err(err) => ModuleBuildInfoState::Error(err.to_string()),
+                        });
                     }
                 }
 
@@ -1498,5 +1653,67 @@ impl ResymApp {
                 }
             }
         });
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod tests {
+    use super::{LeftPanelTab, ModuleBuildInfoState, ReconstructionRequest, ResymApp};
+    use eframe::egui;
+
+    #[test]
+    fn build_information_divider_resizes_in_both_directions() {
+        let ctx = egui::Context::default();
+        ctx.style_mut(|style| style.animation_time = 0.0);
+        let cc = eframe::CreationContext::_new_kittest(ctx.clone());
+        let logger = memory_logger::blocking::MemoryLogger::setup(log::Level::Error).unwrap();
+        let mut app = ResymApp::new(&cc, logger).unwrap();
+        app.left_panel_selected_tab = LeftPanelTab::ModuleBrowsing;
+        app.last_reconstruction = Some(ReconstructionRequest::Module {
+            path: "sample.obj".into(),
+            pdb_index: 0,
+        });
+        app.module_build_info = Some(ModuleBuildInfoState::Unavailable);
+
+        let mut frame = |events| {
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1000.0, 800.0),
+                )),
+                events,
+                ..Default::default()
+            };
+            let _ = ctx.run(input, |ctx| app.update_central_panel(ctx));
+        };
+        let panel_rect = || {
+            egui::containers::panel::PanelState::load(
+                &ctx,
+                egui::Id::new("module_build_info_splitter"),
+            )
+            .unwrap()
+            .rect
+        };
+        let button = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+
+        frame(vec![]);
+        for delta in [110.0, -75.0] {
+            let before = panel_rect();
+            let start = egui::pos2(before.center().x, before.bottom());
+            let end = start + egui::vec2(0.0, delta);
+            frame(vec![egui::Event::PointerMoved(start)]);
+            frame(vec![button(start, true)]);
+            frame(vec![egui::Event::PointerMoved(end)]);
+            frame(vec![]);
+            frame(vec![button(end, false)]);
+            frame(vec![]);
+            let after = panel_rect();
+            assert!((after.height() - before.height() - delta).abs() < 2.0);
+        }
     }
 }

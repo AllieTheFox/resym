@@ -65,6 +65,10 @@ pub enum ResymCoreError {
     #[error("module info not found: {0}")]
     ModuleInfoNotFoundError(String),
 
+    /// A module's recorded compiler build information is malformed.
+    #[error("invalid build information: {0}")]
+    InvalidBuildInfoError(String),
+
     /// Error returned when parsing a `PrimitiveReconstructionFlavor` from a string fails.
     #[error("invalid primitive type flavor: {0}")]
     ParsePrimitiveFlavorError(String),

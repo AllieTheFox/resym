@@ -10,6 +10,7 @@ use super::{
     DataFormatConfiguration, Field, MemberKind, MemberRef, Method, MethodImplementations,
     NeededTypeSet, ReconstructibleTypeData, TypeForwarder, TypeNameFlavor, TypeSourceLocations,
 };
+use crate::constant_values::{constant_initializer, is_enum_type, unmodified_type_index};
 use crate::error::{Result, ResymCoreError};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -150,6 +151,9 @@ impl<'p> Union<'p> {
                     type_left,
                     type_right,
                     name: data.name,
+                    field_type: unmodified_type_index(type_finder, data.field_type),
+                    constant_value: None,
+                    is_enum: is_enum_type(type_finder, data.field_type),
                     access,
                 });
             }
@@ -497,15 +501,28 @@ impl<'p> Union<'p> {
         current_access: &Cell<FieldAccess>,
         f: &mut impl std::fmt::Write,
     ) -> fmt::Result {
-        writeln!(
+        write!(
             f,
-            "{}{}static {} {}{};",
+            "{}{}static {} {}{}",
             fmt_configuration.indent(),
             access_specifier(fmt_configuration, field.access, Some(current_access)),
             field.type_left,
             super::escape_name(&field.name.to_string()),
             field.type_right,
-        )
+        )?;
+        if let Some(value) = field.constant_value {
+            write!(
+                f,
+                " = {}",
+                constant_initializer(
+                    value,
+                    fmt_configuration.integers_as_hexadecimal,
+                    field.is_enum,
+                    &field.type_left,
+                )
+            )?;
+        }
+        writeln!(f, ";")
     }
 
     fn fmt_instance_method(

@@ -20,6 +20,9 @@ pub struct StaticField<'p> {
     pub type_left: String,
     pub type_right: String,
     pub name: pdb::RawString<'p>,
+    pub field_type: pdb::TypeIndex,
+    pub constant_value: Option<pdb::Variant>,
+    pub is_enum: bool,
     pub access: FieldAccess,
 }
 

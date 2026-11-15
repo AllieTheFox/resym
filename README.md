@@ -16,6 +16,8 @@ Inspired by [PDBRipper](https://github.com/horsicq/PDBRipper) and
 - C and C++ types diff generation (between two PDBs)
 - Compilable output for C types (partial support for C++ types)
 - PDB module browsing
+- Per-module compiler build information, including recorded paths and complete compiler options
+- Integer constant initializers retained by the PDB, including static members and local constants
 
 ## Screenshot
 
@@ -67,7 +69,29 @@ SUBCOMMANDS:
     list-modules         List modules from a given PDB file
     list-source-files    List source files (that define types or functions) from a given PDB file
     list-symbols         List symbols from a given PDB file
+    module-build-info    Show recorded compiler build information for a module
 ```
+
+### Module build information
+
+Select an object in **Browse modules** to inspect its **Build information**.
+The section shows the recorded working directory, compiler, source argument,
+compiler PDB, and compiler options. Fields can be selected and copied, or copied
+together with **Copy all build information**. Drag the divider below the section
+to resize it vertically; the C++ view and console remain separate.
+
+The CLI uses the zero-based module IDs printed by `list-modules`:
+
+```text
+resymc module-build-info example.pdb 69
+resymc module-build-info example.pdb 69 build-info.txt
+```
+
+These are paths and options from the build machine, not commands to execute
+locally. The compiler PDB path can differ from the linked PDB being browsed.
+Missing metadata is marked unavailable. Broken records, unsupported text
+encodings, or excessively large expansions report an error instead of partial
+options. Resolved argument text is limited to 16 MiB per module.
 
 ## How to Build
 
@@ -92,6 +116,10 @@ reconstructed output for C++ types isn't necessarily compilable. Namespaces are
 reconstructed when the "Reconstruct namespaces" setting is enabled (`-n` in
 `resymc`), but types in anonymous namespaces are still referenced with their
 PDB name (`` `anonymous-namespace'::Type ``).
+
+Constant initializers are shown only when their values are recorded in the
+PDB's integer constant symbols. Ordinary variable initializers, floating-point
+and string constants aren't recovered from the executable's data.
 
 The web version cannot handle PDB files larger than ~2.1 GB due to how files
 are accessed and the 32-bit limitations of `wasm32` targets. This might change

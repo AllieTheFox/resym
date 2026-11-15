@@ -17,6 +17,11 @@ use std::{
 use std::{fs::File, path::Path, time::Instant};
 
 use crate::{
+    build_info::{resolve_build_info, ModuleBuildInfo},
+    constant_values::{
+        constant_initializer, is_enum_type, is_integral_type, normalize_constant,
+        unmodified_type_index, ConstantValues,
+    },
     error::{Result, ResymCoreError},
     frontend::ReconstructedType,
     local_variables::{
@@ -153,6 +158,8 @@ where
     /// Typedef names of tags and handles, read from the global symbols on
     /// first use
     typedef_names: OnceLock<TypedefNames>,
+    /// Initializers retained by native constant symbols, loaded on first use.
+    constant_values: OnceLock<ConstantValues>,
     pdb: RwLock<pdb::PDB<'p, T>>,
 }
 
@@ -188,6 +195,7 @@ impl<'p> PdbFile<'p, File> {
             string_table: OnceLock::new(),
             source_files: OnceLock::new(),
             typedef_names: OnceLock::new(),
+            constant_values: OnceLock::new(),
             pdb: pdb.into(),
         };
         pdb_file.load_symbols()?;
@@ -230,6 +238,7 @@ impl<'p> PdbFile<'p, PDBDataSource> {
             string_table: OnceLock::new(),
             source_files: OnceLock::new(),
             typedef_names: OnceLock::new(),
+            constant_values: OnceLock::new(),
             pdb: pdb.into(),
         };
         pdb_file.load_symbols()?;
@@ -270,6 +279,7 @@ impl<'p> PdbFile<'p, PDBDataSource> {
             string_table: OnceLock::new(),
             source_files: OnceLock::new(),
             typedef_names: OnceLock::new(),
+            constant_values: OnceLock::new(),
             pdb: pdb.into(),
         };
         pdb_file.load_symbols()?;
@@ -612,8 +622,18 @@ where
                 };
 
                 let mut module_symbols = module_info.symbols()?;
+                let mut scope_depth = 0usize;
                 while let Some(symbol) = module_symbols.next()? {
+                    let in_scope = scope_depth != 0;
+                    if symbol.starts_scope() {
+                        scope_depth += 1;
+                    } else if symbol.ends_scope() {
+                        scope_depth = scope_depth.saturating_sub(1);
+                    }
                     if let Ok(symbol_data) = symbol.parse() {
+                        if in_scope && matches!(symbol_data, pdb::SymbolData::Constant(_)) {
+                            continue;
+                        }
                         if let Some(symbol_name) = get_symbol_name(&symbol_data) {
                             symbol_heap.push(PrioritizedSymbol {
                                 priority: symbol_priority(&symbol_data),
@@ -669,6 +689,60 @@ where
             .map(|(index, module)| Ok((module.module_name().into_owned(), index)));
 
         Ok(module_list.collect()?)
+    }
+
+    /// Resolve the compiler metadata referenced by this module's S_BUILDINFO.
+    /// Modules with no symbol stream or no build-info reference have no metadata.
+    pub fn module_build_info(&self, module_index: usize) -> Result<Option<ModuleBuildInfo>> {
+        let module = self
+            .debug_information
+            .modules()?
+            .nth(module_index)?
+            .ok_or_else(|| ResymCoreError::ModuleNotFoundError(module_index.to_string()))?;
+        let Some(module_info) = self
+            .pdb
+            .write()
+            .expect("lock shouldn't be poisoned")
+            .module_info(&module)?
+        else {
+            return Ok(None);
+        };
+        let mut symbols = module_info.symbols()?;
+        let mut item_index = None;
+        while let Some(symbol) = symbols.next()? {
+            // Skip unrelated (and possibly unsupported) symbol kinds. The
+            // named parser validates the S_BUILDINFO payload itself.
+            if symbol.raw_kind() != 0x114c {
+                continue;
+            }
+            if let pdb::SymbolData::BuildInfo(build_info) = symbol.parse()? {
+                if build_info.id.0 == 0 {
+                    continue;
+                }
+                if item_index.is_some_and(|previous| previous != build_info.id) {
+                    return Err(ResymCoreError::InvalidBuildInfoError(
+                        "module has conflicting S_BUILDINFO references".to_owned(),
+                    ));
+                }
+                item_index = Some(build_info.id);
+            }
+        }
+        let Some(item_index) = item_index else {
+            return Ok(None);
+        };
+        if let Some(information) = &self.id_information {
+            return resolve_build_info(information, item_index).map(Some);
+        }
+        // Older features intentionally ignore unavailable IPI via .ok() at
+        // load time. Retry the named parser here so an actual S_BUILDINFO
+        // cannot hide a missing, malformed or unreadable IPI stream. The
+        // parser opens stream 4 directly, without trusting a Has IDs flag.
+        let information = self
+            .pdb
+            .write()
+            .expect("lock shouldn't be poisoned")
+            .id_information()?;
+        resolve_build_info(&information, item_index).map(Some)
     }
 
     /// Returns the source files that define types (according to the IPI
@@ -933,6 +1007,7 @@ where
                 &mut needed_types,
             )?;
         }
+        type_data.assign_constant_values(self.constant_values(type_finder));
         self.assign_method_implementations(
             &mut type_data,
             type_finder,
@@ -1346,8 +1421,18 @@ where
                     let module_context =
                         ModuleContext::new(self, Some(&module_info), print_source_locations);
                     let mut module_symbols = module_info.symbols()?;
+                    let mut scope_depth = 0usize;
                     while let Some(symbol) = module_symbols.next()? {
+                        let in_scope = scope_depth != 0;
+                        if symbol.starts_scope() {
+                            scope_depth += 1;
+                        } else if symbol.ends_scope() {
+                            scope_depth = scope_depth.saturating_sub(1);
+                        }
                         if let Ok(symbol_data) = symbol.parse() {
+                            if in_scope && matches!(symbol_data, pdb::SymbolData::Constant(_)) {
+                                continue;
+                            }
                             if get_symbol_name(&symbol_data).is_some() {
                                 if let Some(reconstructed_symbol) = self.reconstruct_symbol(
                                     &type_finder,
@@ -1457,7 +1542,19 @@ where
 
         let module_context = ModuleContext::new(self, Some(&module_info), print_source_locations);
         let mut result = String::default();
+        let mut scope_depth = 0usize;
         module_info.symbols()?.for_each(|symbol| {
+            let in_scope = scope_depth != 0;
+            if symbol.starts_scope() {
+                scope_depth += 1;
+            } else if symbol.ends_scope() {
+                scope_depth = scope_depth.saturating_sub(1);
+            }
+            // Procedure constants are printed with their local variables, not
+            // as additional declarations outside the procedure.
+            if in_scope && matches!(symbol.parse(), Ok(pdb::SymbolData::Constant(_))) {
+                return Ok(());
+            }
             let reconstructed_symbol = self.reconstruct_symbol(
                 &type_finder,
                 id_finder.as_ref(),
@@ -1675,6 +1772,7 @@ where
                 }
             }
 
+            type_data.assign_constant_values(self.constant_values(type_finder));
             self.assign_method_implementations(
                 &mut type_data,
                 type_finder,
@@ -1787,6 +1885,7 @@ where
                 group_types_by_namespace(&type_data, &type_dependency_map, &type_depth_map);
         }
 
+        type_data.assign_constant_values(self.constant_values(type_finder));
         self.assign_method_implementations(
             &mut type_data,
             type_finder,
@@ -1898,6 +1997,7 @@ where
                 }
             }
 
+            type_data.assign_constant_values(self.constant_values(&type_finder));
             self.assign_method_implementations(
                 &mut type_data,
                 &type_finder,
@@ -2114,6 +2214,25 @@ where
                 typedef_names.handles.len()
             );
             typedef_names
+        })
+    }
+
+    fn constant_values(&self, type_finder: &pdb::TypeFinder<'_>) -> &ConstantValues {
+        self.constant_values.get_or_init(|| {
+            let mut values = ConstantValues::default();
+            let mut symbols = self.global_symbols.iter();
+            while let Ok(Some(symbol)) = symbols.next() {
+                if let Ok(pdb::SymbolData::Constant(constant)) = symbol.parse() {
+                    if !constant.managed && is_integral_type(type_finder, constant.type_index) {
+                        values.insert(
+                            &constant.name.to_string(),
+                            unmodified_type_index(type_finder, constant.type_index),
+                            normalize_constant(type_finder, constant.type_index, constant.value),
+                        );
+                    }
+                }
+            }
+            values
         })
     }
 
@@ -2567,6 +2686,34 @@ where
                 } else {
                     None
                 }
+            }
+
+            pdb::SymbolData::Constant(constant) if !constant.managed => {
+                let type_index = module_context.resolve(constant.type_index);
+                if !is_integral_type(type_finder, type_index) {
+                    return None;
+                }
+                let (type_left, type_right) = type_name(
+                    type_finder,
+                    &self.forwarder_to_complete_type,
+                    type_index,
+                    &type_name_flavor,
+                    needed_types,
+                )
+                .ok()?;
+                let initializer = constant_initializer(
+                    normalize_constant(type_finder, type_index, constant.value),
+                    false,
+                    is_enum_type(type_finder, type_index),
+                    &type_left,
+                );
+                Some(format!(
+                    "{} {}{} = {};",
+                    type_left,
+                    pdb_types::escape_name(&constant.name.to_string()),
+                    type_right,
+                    initializer,
+                ))
             }
 
             pdb::SymbolData::UsingNamespace(namespace) => {
@@ -3057,6 +3204,9 @@ fn get_symbol_name(symbol_data: &pdb::SymbolData) -> Option<String> {
 
         // Global variables
         pdb::SymbolData::Data(data) => Some(data.name.to_string().to_string()),
+        pdb::SymbolData::Constant(constant) if !constant.managed => {
+            Some(constant.name.to_string().into_owned())
+        }
 
         // Public symbols
         pdb::SymbolData::Public(data) => Some(data.name.to_string().to_string()),
@@ -3095,6 +3245,7 @@ fn get_symbol_type(symbol_data: &pdb::SymbolData) -> SymbolKind {
 
         // Global variables
         pdb::SymbolData::Data(_) => SymbolKind::Variable,
+        pdb::SymbolData::Constant(constant) if !constant.managed => SymbolKind::Variable,
 
         // Public symbols
         pdb::SymbolData::Public(data) => {
@@ -3157,6 +3308,7 @@ fn symbol_priority(symbol_data: &pdb::SymbolData) -> u16 {
         pdb::SymbolData::Procedure(_)
         | pdb::SymbolData::UserDefinedType(_)
         | pdb::SymbolData::Data(_) => 0,
+        pdb::SymbolData::Constant(constant) if !constant.managed => 0,
         // Public symbols
         pdb::SymbolData::Public(_) => 1,
         // Exported symbols

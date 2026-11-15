@@ -3,7 +3,8 @@
 //! - non-optimized code: `S_REGREL32` (x64), `S_BPREL32` (x86) or
 //!   `S_REGISTER` records, with a single location,
 //! - optimized code: `S_LOCAL` records followed by `S_DEFRANGE_*` records
-//!   giving the variable's location for ranges of code.
+//!   giving the variable's location for ranges of code,
+//! - constants: native `S_CONSTANT` records retaining their integer value.
 //!
 //! Variables of nested blocks (`S_BLOCK32`) and inlined call sites
 //! (`S_INLINESITE`) are recorded in nested scopes.
@@ -12,6 +13,9 @@ use std::collections::HashSet;
 
 use pdb::FallibleIterator;
 
+use crate::constant_values::{
+    constant_initializer, is_enum_type, is_integral_type, normalize_constant,
+};
 use crate::pdb_types::{type_name, NeededTypeSet, TypeForwarder, TypeNameFlavor};
 use crate::registers::{register_name, CV_ALLREG_VFRAME};
 
@@ -76,6 +80,7 @@ pub struct VariableLocation {
 pub struct LocalVariable {
     pub name: String,
     pub type_index: pdb::TypeIndex,
+    pub constant_value: Option<pdb::Variant>,
     pub is_parameter: bool,
     pub is_optimized_out: bool,
     /// Copy of a global (or static) variable kept in a register for part of
@@ -276,7 +281,12 @@ pub fn procedure_local_variables<'s>(
             |name: pdb::RawString<'_>, type_index: pdb::TypeIndex, storage: VariableStorage| {
                 let name = name.to_string().into_owned();
                 // Copy of a stack variable described by `S_LOCAL`
-                if uses_local_records && scope.variables.iter().any(|v| v.name == name) {
+                if uses_local_records
+                    && scope
+                        .variables
+                        .iter()
+                        .any(|v| v.constant_value.is_none() && v.name == name)
+                {
                     return;
                 }
                 // Parameters are the first unflagged variables of the procedure
@@ -288,6 +298,7 @@ pub fn procedure_local_variables<'s>(
                 scope.variables.push(LocalVariable {
                     name,
                     type_index,
+                    constant_value: None,
                     is_parameter,
                     is_optimized_out: false,
                     enregistered: None,
@@ -346,12 +357,25 @@ pub fn procedure_local_variables<'s>(
                 VariableStorage::Register(variable.register.0),
             ),
 
+            pdb::SymbolData::Constant(constant) if !constant.managed => {
+                scope.variables.push(LocalVariable {
+                    name: constant.name.to_string().into_owned(),
+                    type_index: constant.type_index,
+                    constant_value: Some(constant.value),
+                    is_parameter: false,
+                    is_optimized_out: false,
+                    enregistered: None,
+                    locations: Vec::new(),
+                });
+            }
+
             // Optimized code: the location follows in `S_DEFRANGE_*` records
             pdb::SymbolData::Local(local) => {
                 let flags = local_variable_flags(&symbol);
                 scope.variables.push(LocalVariable {
                     name: local.name.to_string().into_owned(),
                     type_index: local.type_index,
+                    constant_value: None,
                     is_parameter: local.flags.isparam,
                     is_optimized_out: flags & CV_LVARFLAG_ISOPTIMIZEDOUT != 0,
                     enregistered: if flags & CV_LVARFLAG_ISENREG_GLOB != 0 {
@@ -424,9 +448,13 @@ pub fn procedure_local_variables<'s>(
 }
 
 /// Adds a location to the last variable of `scope`, which `S_DEFRANGE_*`
-/// records follow.
+/// records follow. A constant ends that location association.
 fn add_location(scope: &mut Scope, storage: VariableStorage, range: Option<CodeRange>) {
-    if let Some(variable) = scope.variables.last_mut() {
+    if let Some(variable) = scope
+        .variables
+        .last_mut()
+        .filter(|variable| variable.constant_value.is_none())
+    {
         variable.locations.push(VariableLocation { storage, range });
     }
 }
@@ -507,17 +535,33 @@ fn scope_lines(
         }
         let indentation = format.indent.repeat(depth + repeated_name_blocks);
         let type_index = (names.resolve_type_index)(variable.type_index);
-        let declaration = match type_name(
+        let (type_left, type_right) = type_name(
             names.type_finder,
             names.type_forwarder,
             type_index,
             names.type_name_flavor,
             needed_types,
-        ) {
-            Ok((type_left, type_right)) => {
-                format!("{type_left} {}{type_right};", variable.name)
+        )
+        .unwrap_or_else(|_| {
+            (
+                format!("/* unknown type 0x{:x} */", type_index.0),
+                String::new(),
+            )
+        });
+        let declaration = match variable
+            .constant_value
+            .filter(|_| is_integral_type(names.type_finder, type_index))
+        {
+            Some(value) => {
+                let initializer = constant_initializer(
+                    normalize_constant(names.type_finder, type_index, value),
+                    false,
+                    is_enum_type(names.type_finder, type_index),
+                    &type_left,
+                );
+                format!("{type_left} {}{type_right} = {initializer};", variable.name)
             }
-            Err(_) => format!("/* unknown type 0x{:x} */ {};", type_index.0, variable.name),
+            None => format!("{type_left} {}{type_right};", variable.name),
         };
 
         let mut comments = Vec::new();

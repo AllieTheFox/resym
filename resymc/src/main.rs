@@ -250,6 +250,11 @@ fn main() -> Result<()> {
             use_regex,
             output_file_path,
         ),
+        ResymcOptions::ModuleBuildInfo {
+            pdb_path,
+            module_id,
+            output_file_path,
+        } => app.module_build_info_command(pdb_path, module_id, output_file_path),
         ResymcOptions::DumpModule {
             pdb_path,
             module_id,

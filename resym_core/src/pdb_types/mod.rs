@@ -14,11 +14,13 @@ use std::fmt;
 use std::fmt::Write as _;
 use std::ops::Range;
 
+use crate::constant_values::ConstantValues;
 use crate::error::{Result, ResymCoreError};
 use class::Class;
 use enumeration::Enum;
-use field::{Field, FieldAccess};
+use field::{Field, FieldAccess, StaticField};
 use method::Method;
+use nested::{NestedDeclaration, NestedDeclarationKind};
 use primitive_types::primitive_kind_as_str;
 use union::Union;
 
@@ -886,6 +888,54 @@ impl Data<'_> {
         }
         for u in self.unions.values_mut() {
             u.assign_method_implementations(implementations, parameter_names, rvas);
+        }
+    }
+
+    /// Sets known static field values, including fields of nested types.
+    pub(crate) fn assign_constant_values(&mut self, values: &ConstantValues) {
+        for class in self.classes.values_mut() {
+            Self::assign_type_constant_values(
+                &class.name,
+                &mut class.static_fields,
+                &mut class.nested_types,
+                values,
+            );
+        }
+        for union in self.unions.values_mut() {
+            Self::assign_type_constant_values(
+                &union.name,
+                &mut union.static_fields,
+                &mut union.nested_types,
+                values,
+            );
+        }
+    }
+
+    fn assign_type_constant_values(
+        owner: &str,
+        static_fields: &mut [StaticField<'_>],
+        nested_types: &mut [NestedDeclaration<'_>],
+        values: &ConstantValues,
+    ) {
+        for field in static_fields {
+            field.constant_value = values.get(owner, &field.name.to_string(), field.field_type);
+        }
+        for nested in nested_types {
+            match &mut nested.kind {
+                NestedDeclarationKind::Class { class, .. } => Self::assign_type_constant_values(
+                    &class.name,
+                    &mut class.static_fields,
+                    &mut class.nested_types,
+                    values,
+                ),
+                NestedDeclarationKind::Union { union, .. } => Self::assign_type_constant_values(
+                    &union.name,
+                    &mut union.static_fields,
+                    &mut union.nested_types,
+                    values,
+                ),
+                _ => {}
+            }
         }
     }
 

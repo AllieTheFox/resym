@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 use crate::{
     backend::PDBSlot,
+    build_info::ModuleBuildInfo,
     diffing::Diff,
     error::Result,
     pdb_file::{ModuleList, SymbolList, TypeList},
@@ -29,6 +30,7 @@ pub enum FrontendCommand {
     // Modules
     ListModulesResult(Result<ModuleList>),
     ReconstructModuleResult(Result<String>),
+    ModuleBuildInfoResult(PDBSlot, usize, Result<Option<ModuleBuildInfo>>),
 
     // Source files
     ListSourceFilesResult(Result<ModuleList>),
